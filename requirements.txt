@@ -5,8 +5,6 @@ plotly
 openpyxl
 matplotlib
 qrcode[pil]
-pyzbar
 Pillow
 gspread
 google-auth
-streamlit-qrcode-scanner

@@ -524,7 +524,7 @@ with tab_admin:
             if pwd==get_admin_pwd():
                 st.session_state.admin_logged_in=True; st.rerun()
             else: st.error("❌ Mot de passe incorrect")
-        st.caption("Mot de passe par défaut : `formation2026` (modifiable dans secrets.toml)")
+        st.caption("Mot de passe par défaut : `sans_dohi` (modifiable par Admin)")
     else:
         cola,colb=st.columns([2,1])
         with cola: st.success("✅ Connecté en tant qu'administrateur")

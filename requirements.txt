@@ -6,6 +6,4 @@ openpyxl
 qrcode[pil]
 Pillow
 supabase
-streamlit-qrcode-scanner
 fpdf2
-xlsxwriter

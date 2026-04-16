@@ -636,21 +636,25 @@ def export_stats_excel(df, note_cols, name_col, df_stats, df_pres_stats):
 def export_pdf_direction(df_stats, df_pres_stats, note_cols, agents):
     """Rapport PDF de synthèse pour la direction."""
     if not PDF_OK: return None
+    import unicodedata
+    def sp(text):
+        """Encode le texte pour fpdf (supprime les accents non supportés)."""
+        text = str(text)
+        return unicodedata.normalize('NFKD', text).encode('latin-1', 'ignore').decode('latin-1')
     from fpdf import FPDF
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", "B", 20)
     pdf.set_text_color(44, 62, 122)
-    pdf.cell(0, 12, "RAPPORT DE FORMATION", ln=True, align="C")
+    pdf.cell(0, 12, sp("RAPPORT DE FORMATION"), ln=True, align="C")
     pdf.set_font("Helvetica", "", 11)
     pdf.set_text_color(107, 125, 179)
-    pdf.cell(0, 8, f"Généré le {datetime.date.today().strftime('%d/%m/%Y')}", ln=True, align="C")
+    pdf.cell(0, 8, sp(f"Genere le {datetime.date.today().strftime('%d/%m/%Y')}"), ln=True, align="C")
     pdf.ln(6)
 
-    # Stats globales
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(44, 62, 122)
-    pdf.cell(0, 10, "1. Statistiques générales", ln=True)
+    pdf.cell(0, 10, sp("1. Statistiques generales"), ln=True)
     pdf.set_draw_color(74, 108, 247)
     pdf.line(10, pdf.get_y(), 200, pdf.get_y())
     pdf.ln(4)
@@ -659,64 +663,62 @@ def export_pdf_direction(df_stats, df_pres_stats, note_cols, agents):
     pdf.set_font("Helvetica", "", 11)
     pdf.set_text_color(26, 26, 46)
     stats = [
-        (f"Nombre d'agents", len(agents)),
-        (f"Nombre d'évaluations", len(note_cols)),
-        (f"Moyenne générale", round(np.mean(all_v),2)),
-        (f"Très Bien (≥16)", len(df_stats[df_stats["Mention"]=="Très Bien"])),
-        (f"Bien (14-15)", len(df_stats[df_stats["Mention"]=="Bien"])),
-        (f"Assez Bien", len(df_stats[df_stats["Mention"]=="Assez Bien"])),
-        (f"Insuffisant", len(df_stats[df_stats["Mention"]=="Insuffisant"])),
+        ("Nombre d'agents",      len(agents)),
+        ("Nombre d'evaluations", len(note_cols)),
+        ("Moyenne generale",     round(np.mean(all_v),2)),
+        ("Tres Bien (>=16)",     len(df_stats[df_stats["Mention"]=="Très Bien"])),
+        ("Bien (14-15)",         len(df_stats[df_stats["Mention"]=="Bien"])),
+        ("Assez Bien",           len(df_stats[df_stats["Mention"]=="Assez Bien"])),
+        ("Insuffisant",          len(df_stats[df_stats["Mention"]=="Insuffisant"])),
     ]
     for k,v in stats:
-        pdf.cell(100, 8, k, border="B")
-        pdf.cell(90, 8, str(v), border="B", ln=True, align="C")
+        pdf.cell(100, 8, sp(k), border="B")
+        pdf.cell(90, 8, sp(str(v)), border="B", ln=True, align="C")
     pdf.ln(8)
 
-    # Classement top 5
     pdf.set_font("Helvetica", "B", 14)
     pdf.set_text_color(44, 62, 122)
-    pdf.cell(0, 10, "2. Top 5 agents", ln=True)
+    pdf.cell(0, 10, sp("2. Top 5 agents"), ln=True)
     pdf.set_draw_color(74, 108, 247)
     pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(4)
     top5 = df_stats.sort_values("Moyenne", ascending=False).head(5)
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_fill_color(44, 62, 122); pdf.set_text_color(255,255,255)
     pdf.cell(10,8,"#",fill=True,border=1,align="C")
-    pdf.cell(110,8,"Agent",fill=True,border=1)
-    pdf.cell(40,8,"Moyenne",fill=True,border=1,align="C")
-    pdf.cell(30,8,"Mention",fill=True,border=1,align="C",ln=True)
+    pdf.cell(110,8,sp("Agent"),fill=True,border=1)
+    pdf.cell(40,8,sp("Moyenne"),fill=True,border=1,align="C")
+    pdf.cell(30,8,sp("Mention"),fill=True,border=1,align="C",ln=True)
     pdf.set_font("Helvetica","",10); pdf.set_text_color(26,26,46)
     for i,(_, row) in enumerate(top5.iterrows(), 1):
         pdf.set_fill_color(240,244,255) if i%2==0 else pdf.set_fill_color(255,255,255)
         pdf.cell(10,8,str(i),fill=True,border=1,align="C")
-        pdf.cell(110,8,str(row["Agent"])[:45],fill=True,border=1)
-        pdf.cell(40,8,f"{row['Moyenne']:.2f}/20",fill=True,border=1,align="C")
-        pdf.cell(30,8,str(row["Mention"]),fill=True,border=1,align="C",ln=True)
+        pdf.cell(110,8,sp(str(row["Agent"])[:45]),fill=True,border=1)
+        pdf.cell(40,8,sp(f"{row['Moyenne']:.2f}/20"),fill=True,border=1,align="C")
+        pdf.cell(30,8,sp(str(row["Mention"])),fill=True,border=1,align="C",ln=True)
     pdf.ln(8)
 
-    # Alertes
     if df_pres_stats is not None and len(df_pres_stats)>0:
         alertes = df_pres_stats[df_pres_stats["Alerte"]==True]
         pdf.set_font("Helvetica","B",14)
         pdf.set_text_color(44,62,122)
-        pdf.cell(0,10,f"3. Alertes — {len(alertes)} agent(s) en situation critique",ln=True)
+        pdf.cell(0,10,sp(f"3. Alertes - {len(alertes)} agent(s) en situation critique"),ln=True)
         pdf.set_draw_color(231,76,60)
         pdf.line(10,pdf.get_y(),200,pdf.get_y()); pdf.ln(4)
         if len(alertes)>0:
             pdf.set_font("Helvetica","B",10)
             pdf.set_fill_color(44,62,122); pdf.set_text_color(255,255,255)
-            pdf.cell(110,8,"Agent",fill=True,border=1)
-            pdf.cell(40,8,"Absent non justifié",fill=True,border=1,align="C")
-            pdf.cell(40,8,"Taux présence",fill=True,border=1,align="C",ln=True)
+            pdf.cell(110,8,sp("Agent"),fill=True,border=1)
+            pdf.cell(40,8,sp("Abs. non justifiee"),fill=True,border=1,align="C")
+            pdf.cell(40,8,sp("Taux presence"),fill=True,border=1,align="C",ln=True)
             pdf.set_font("Helvetica","",10); pdf.set_text_color(26,26,46)
             for _,row in alertes.iterrows():
                 pdf.set_fill_color(255,235,235)
-                pdf.cell(110,8,str(row["Agent"])[:45],fill=True,border=1)
-                pdf.cell(40,8,str(row["Absent non justifié"]),fill=True,border=1,align="C")
-                pdf.cell(40,8,f"{row['Taux présence (%)']:.1f}%",fill=True,border=1,align="C",ln=True)
+                pdf.cell(110,8,sp(str(row["Agent"])[:45]),fill=True,border=1)
+                pdf.cell(40,8,sp(str(row["Absent non justifié"])),fill=True,border=1,align="C")
+                pdf.cell(40,8,sp(f"{row['Taux présence (%)']:.1f}%"),fill=True,border=1,align="C",ln=True)
         else:
             pdf.set_font("Helvetica","",11); pdf.set_text_color(30,126,52)
-            pdf.cell(0,8,"Aucune alerte — tous les agents sont dans les normes.",ln=True)
+            pdf.cell(0,8,sp("Aucune alerte - tous les agents sont dans les normes."),ln=True)
 
     pdf.ln(8)
     pdf.set_font("Helvetica","I",9); pdf.set_text_color(160,174,192)

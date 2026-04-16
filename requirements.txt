@@ -7,4 +7,5 @@ qrcode[pil]
 Pillow
 fpdf2
 requests
+supabase
 streamlit-qrcode-scanner

@@ -3,9 +3,9 @@ pandas
 numpy
 plotly
 openpyxl
-matplotlib
 qrcode[pil]
 Pillow
-gspread
-google-auth
+supabase
 streamlit-qrcode-scanner
+fpdf2
+xlsxwriter

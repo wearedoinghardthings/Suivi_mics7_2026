@@ -3,7 +3,14 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
-import io, qrcode, datetime, zipfile, base64
+import io, qrcode, datetime, zipfile, base64, json
+from PIL import Image
+
+try:
+    from supabase import create_client
+    SUPABASE_LIB = True
+except Exception:
+    SUPABASE_LIB = False
 
 try:
     from streamlit_qrcode_scanner import qrcode_scanner
@@ -11,25 +18,20 @@ try:
 except Exception:
     QR_OK = False
 
-# ════════════════════════════════════════════════════════════════════════════
-# ÉTAT PARTAGÉ — même objet pour TOUS les utilisateurs
-# ════════════════════════════════════════════════════════════════════════════
-@st.cache_resource
-def get_shared():
-    return {
-        "notes": None,
-        "notes_label": "Données par défaut",
-        "presences": [],
-        "sessions_config": ["Jour 1 - Matin","Jour 1 - Après-midi",
-                            "Jour 2 - Matin","Jour 2 - Après-midi","Jour 3 - Matin"],
-    }
-shared = get_shared()
+try:
+    from fpdf import FPDF
+    PDF_OK = True
+except Exception:
+    PDF_OK = False
 
-# ════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════
 # PAGE CONFIG
-# ════════════════════════════════════════════════════════════════════════════
-st.set_page_config(page_title="Formation — Notes & Présences",
-                   page_icon="📊", layout="wide", initial_sidebar_state="expanded")
+# ════════════════════════════════════════════════════════════
+st.set_page_config(
+    page_title="Formation — Direction",
+    page_icon="📊", layout="wide",
+    initial_sidebar_state="expanded"
+)
 
 st.markdown("""
 <style>
@@ -40,8 +42,8 @@ section[data-testid="stSidebar"]{background:linear-gradient(160deg,#f0f4ff,#e8f0
 section[data-testid="stSidebar"] *{color:#1a1a2e!important;}
 .main-title{font-family:'DM Serif Display',serif;font-size:clamp(1.4rem,4vw,2rem);color:#2c3e7a;}
 .sub-title{font-size:clamp(.78rem,2.5vw,.9rem);color:#6b7db3;margin-bottom:1rem;}
-.kpi-card{background:#fff;border:1px solid #e0e8ff;border-radius:14px;
-  padding:clamp(10px,2vw,16px);text-align:center;box-shadow:0 2px 10px rgba(44,62,122,.06);margin-bottom:6px;}
+.kpi-card{background:#fff;border:1px solid #e0e8ff;border-radius:14px;padding:clamp(10px,2vw,16px);
+  text-align:center;box-shadow:0 2px 10px rgba(44,62,122,.06);margin-bottom:6px;}
 .kpi-value{font-size:clamp(1.2rem,3.5vw,1.7rem);font-weight:700;color:#2c3e7a;line-height:1.1;}
 .kpi-label{font-size:clamp(.6rem,1.8vw,.72rem);color:#7a8db3;margin-top:4px;
   text-transform:uppercase;letter-spacing:.6px;font-weight:500;}
@@ -60,33 +62,31 @@ section[data-testid="stSidebar"] *{color:#1a1a2e!important;}
 .badge-b{background:#dbeafe;color:#1a56db;padding:2px 9px;border-radius:20px;font-size:.76rem;font-weight:600;}
 .badge-ab{background:#fef3c7;color:#92400e;padding:2px 9px;border-radius:20px;font-size:.76rem;font-weight:600;}
 .badge-in{background:#fee2e2;color:#b91c1c;padding:2px 9px;border-radius:20px;font-size:.76rem;font-weight:600;}
+.alerte-rouge{background:#fee2e2;border:1px solid #fca5a5;border-radius:10px;padding:10px 14px;margin:4px 0;}
+.alerte-orange{background:#fef3c7;border:1px solid #fcd34d;border-radius:10px;padding:10px 14px;margin:4px 0;}
+.profil-vert{background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:8px 12px;font-size:.82rem;}
+.profil-bleu{background:#eff6ff;border:1px solid #93c5fd;border-radius:10px;padding:8px 12px;font-size:.82rem;}
+.profil-orange{background:#fff7ed;border:1px solid #fdba74;border-radius:10px;padding:8px 12px;font-size:.82rem;}
+.profil-rouge{background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:8px 12px;font-size:.82rem;}
+.db-ok{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:10px 14px;margin-bottom:8px;font-size:.84rem;color:#166534;}
+.db-warn{background:#fffbeb;border:1px solid #fcd34d;border-radius:10px;padding:10px 14px;margin-bottom:8px;font-size:.84rem;color:#92400e;}
+.scan-ok{background:#f0fdf4;border:2px solid #86efac;border-radius:12px;padding:12px;text-align:center;margin:8px 0;}
 .qr-grid{display:flex;flex-wrap:wrap;gap:10px;}
 .qr-item{background:#fff;border:1px solid #e0e8ff;border-radius:10px;padding:8px;
-  text-align:center;width:clamp(110px,22vw,140px);box-shadow:0 1px 6px rgba(44,62,122,.06);}
-.qr-name{font-size:clamp(.6rem,1.8vw,.72rem);color:#2c3e7a;font-weight:600;
-  margin-top:5px;line-height:1.3;word-break:break-word;}
-.shared-banner{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;
-  padding:10px 14px;margin-bottom:8px;font-size:.84rem;color:#166534;}
-.scan-ok{background:#f0fdf4;border:2px solid #86efac;border-radius:12px;
-  padding:14px;text-align:center;margin:8px 0;}
-/* ── Agrandir l'iframe du scanner QR ── */
-iframe[title="streamlit_qrcode_scanner.qrcode_scanner"]{
-  width:100%!important;min-height:360px!important;border-radius:12px;
-  border:2px dashed #4a6cf7!important;
-}
-div[data-testid="stCustomComponentV1"]{width:100%!important;}
+  text-align:center;width:clamp(110px,22vw,140px);}
+.qr-name{font-size:.7rem;color:#2c3e7a;font-weight:600;margin-top:5px;line-height:1.3;word-break:break-word;}
 @media(max-width:768px){
   .block-container{padding:.4rem .5rem 2rem!important;}
-  iframe[title="streamlit_qrcode_scanner.qrcode_scanner"]{min-height:280px!important;}
+  .qr-item{width:calc(50% - 10px)!important;}
 }
 </style>
 """, unsafe_allow_html=True)
 
-# ════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════
 # DONNÉES PAR DÉFAUT
-# ════════════════════════════════════════════════════════════════════════════
-DEFAULT_DATA = {
-    "Nom et Prénom": [
+# ════════════════════════════════════════════════════════════
+DEFAULT_NOTES = {
+    "Nom et Prénom":[
         "Acka Gustave Boris","Agnero Djadja","Kra Yao Assouman Aubin Gael",
         "Kouao Marie-Paule","Sangaré Aissata","Kouassi Kangah Akissi Philomène",
         "Yao Julienne","Amankan Adjo Josiane","Fouati Edwige","Agnehoura Vanessa",
@@ -104,78 +104,240 @@ DEFAULT_DATA = {
     "Note 8":[20,20,18,18,15,18,13,17,13,17,17,15,15,15,17,12,18,0,13,10],
     "Note 9":[18,18,19,20,15,14,13,19,12,17,17,9,12,13,16,13,0,0,8,3],
 }
+DEFAULT_SESSIONS = ["Jour 1 - Matin","Jour 1 - Après-midi","Jour 2 - Matin",
+                    "Jour 2 - Après-midi","Jour 3 - Matin"]
+MOTIFS = ["Maladie","Raison familiale","Mission professionnelle","Autre","Sans justification"]
 
-# ════════════════════════════════════════════════════════════════════════════
-# FONCTIONS
-# ════════════════════════════════════════════════════════════════════════════
-def get_notes_df():
-    if shared["notes"] is not None:
-        return pd.DataFrame(shared["notes"])
-    return pd.DataFrame(DEFAULT_DATA)
+# ════════════════════════════════════════════════════════════
+# CONNEXION SUPABASE
+# ════════════════════════════════════════════════════════════
+@st.cache_resource
+def get_sb():
+    if not SUPABASE_LIB: return None
+    try:
+        url = st.secrets["supabase"]["url"]
+        key = st.secrets["supabase"]["key"]
+        if "VOTRE" in url or not url.startswith("http"): return None
+        return create_client(url, key)
+    except: return None
 
-def get_presences_df():
-    if shared["presences"]:
-        return pd.DataFrame(shared["presences"])
-    return pd.DataFrame(columns=["Agent","Date","Heure","Session","Statut"])
+sb = get_sb()
+DB = sb is not None
 
-def mention_info(n):
-    if n>=16:  return "Très Bien","badge-tb"
-    elif n>=14: return "Bien","badge-b"
-    elif n>=10: return "Assez Bien","badge-ab"
-    else:       return "Insuffisant","badge-in"
+# ── Cache helpers ─────────────────────────────────────────────────────────
+@st.cache_data(ttl=15)
+def db_get(cle):
+    try:
+        r = sb.table("app_config").select("valeur").eq("cle", cle).execute()
+        if r.data: return r.data[0]["valeur"]
+    except: pass
+    return None
 
-def get_note_cols(df): return [c for c in df.columns if c!=df.columns[0]]
+def db_set(cle, valeur):
+    try:
+        sb.table("app_config").upsert({"cle":cle,"valeur":valeur,
+            "updated_at":datetime.datetime.utcnow().isoformat()}).execute()
+        db_get.clear()
+        return True
+    except: return False
 
-def compute_stats(df, note_cols, name_col):
-    rows=[]
-    for _,row in df.iterrows():
-        vals=[float(row[c]) for c in note_cols]
-        moy=round(np.mean(vals),2); ml,_=mention_info(moy)
-        rows.append({"Agent":row[name_col],"Moyenne":moy,"Max":max(vals),
-                     "Min":min(vals),"Médiane":round(np.median(vals),2),
-                     "Écart-type":round(np.std(vals),2),"Nb notes":len(vals),"Mention":ml})
-    return pd.DataFrame(rows)
+@st.cache_data(ttl=10)
+def db_get_seuil(cle):
+    try:
+        r = sb.table("config_seuils").select("valeur").eq("cle", cle).execute()
+        if r.data: return r.data[0]["valeur"]
+    except: pass
+    return None
 
-def style_note_row(row):
-    return [("background-color:#e6f4ea;color:#1e7e34" if row[c]>=16 else
-             "background-color:#dbeafe;color:#1a56db" if row[c]>=14 else
-             "background-color:#fef3c7;color:#92400e" if row[c]>=10 else
-             "background-color:#fee2e2;color:#b91c1c") if c in ["Moyenne","Max","Min","Médiane"]
-            else "" for c in row.index]
+def db_set_seuil(cle, valeur):
+    try:
+        sb.table("config_seuils").upsert({"cle":cle,"valeur":valeur}).execute()
+        db_get_seuil.clear()
+        return True
+    except: return False
 
-def agent_to_qr_key(name): return f"AGENT::{name}"
-def key_to_agent(key): return key.split("::",1)[1] if "::" in key else key
+@st.cache_data(ttl=8)
+def db_get_presences():
+    try:
+        r = sb.table("presences").select("*").order("date_jour").execute()
+        if r.data:
+            df = pd.DataFrame(r.data)
+            df["date_jour"] = pd.to_datetime(df["date_jour"]).dt.date
+            return df
+    except: pass
+    return pd.DataFrame(columns=["id","agent","date_jour","heure","session","statut"])
 
-def add_presence_shared(agent, session, statut="Présent"):
-    now=datetime.datetime.now()
-    shared["presences"].append({
-        "Agent":agent,"Date":now.strftime("%d/%m/%Y"),
-        "Heure":now.strftime("%H:%M:%S"),"Session":session,"Statut":statut,
-    })
+@st.cache_data(ttl=15)
+def db_get_calendrier():
+    try:
+        r = sb.table("calendrier").select("*").order("date_jour").execute()
+        if r.data:
+            df = pd.DataFrame(r.data)
+            df["date_jour"] = pd.to_datetime(df["date_jour"]).dt.date
+            return df
+    except: pass
+    return pd.DataFrame(columns=["id","date_jour","a_une_note","nom_note","ordre_note"])
 
-def is_already_pointed(agent, session):
-    today=datetime.date.today().strftime("%d/%m/%Y")
-    for p in shared["presences"]:
-        if p["Agent"]==agent and p["Session"]==session and p["Date"]==today:
-            return True, p["Heure"]
+@st.cache_data(ttl=10)
+def db_get_justifications():
+    try:
+        r = sb.table("justifications").select("*").execute()
+        if r.data:
+            df = pd.DataFrame(r.data)
+            df["date_jour"] = pd.to_datetime(df["date_jour"]).dt.date
+            return df
+    except: pass
+    return pd.DataFrame(columns=["id","agent","date_jour","session","type_absence","motif"])
+
+def db_add_presence(agent, date_jour, heure, session, statut="Présent"):
+    try:
+        sb.table("presences").upsert({
+            "agent":agent,
+            "date_jour":str(date_jour),
+            "heure":str(heure),
+            "session":session,
+            "statut":statut,
+        }, on_conflict="agent,date_jour,session").execute()
+        db_get_presences.clear()
+        return True
+    except: return False
+
+def db_check_pointed(agent, session, date_jour=None):
+    if date_jour is None: date_jour = datetime.date.today()
+    try:
+        r = sb.table("presences").select("heure")\
+            .eq("agent",agent).eq("session",session)\
+            .eq("date_jour",str(date_jour)).execute()
+        if r.data: return True, r.data[0]["heure"]
+    except: pass
     return False, None
 
-def presence_stats(agents):
-    pres_df=get_presences_df(); sessions=shared["sessions_config"]
-    rows=[]
-    for agent in agents:
-        ap=pres_df[pres_df["Agent"]==agent] if len(pres_df)>0 else pd.DataFrame()
-        nb=len(ap["Session"].unique()) if len(ap)>0 else 0
-        taux=round(nb/len(sessions)*100,1) if sessions else 0
-        rows.append({"Agent":agent,"Présences":nb,"Sessions totales":len(sessions),
-                     "Taux (%)":taux,
-                     "Statut":("Assidu" if taux>=80 else "Moyen" if taux>=50 else
-                               "Faible" if nb>0 else "Non pointé")})
-    return pd.DataFrame(rows)
+def db_add_justification(agent, date_jour, session, type_abs, motif):
+    try:
+        sb.table("justifications").upsert({
+            "agent":agent,"date_jour":str(date_jour),
+            "session":session,"type_absence":type_abs,"motif":motif,
+        }, on_conflict="agent,date_jour,session").execute()
+        db_get_justifications.clear()
+        return True
+    except: return False
 
-def get_admin_pwd():
-    try: return st.secrets["admin"]["password"]
-    except: return "formation2026"
+def db_save_calendrier(rows):
+    try:
+        sb.table("calendrier").delete().neq("id",0).execute()
+        for row in rows:
+            sb.table("calendrier").insert(row).execute()
+        db_get_calendrier.clear()
+        return True
+    except: return False
+
+# ════════════════════════════════════════════════════════════
+# MÉMOIRE FALLBACK
+# ════════════════════════════════════════════════════════════
+@st.cache_resource
+def mem():
+    return {"notes":None,"sessions":DEFAULT_SESSIONS,"presences":[],
+            "justifications":[],"calendrier":[],"qr_codes":{}}
+M = mem()
+
+# ── Accesseurs unifiés ────────────────────────────────────────────────────
+def get_notes():
+    if DB:
+        v = db_get("notes")
+        return pd.DataFrame(v) if v else pd.DataFrame(DEFAULT_NOTES)
+    return pd.DataFrame(M["notes"]) if M["notes"] else pd.DataFrame(DEFAULT_NOTES)
+
+def get_sessions():
+    if DB:
+        v = db_get("sessions")
+        return v if v else DEFAULT_SESSIONS
+    return M["sessions"]
+
+def get_notes_label():
+    if DB:
+        v = db_get("notes_label")
+        return v if v else "Données par défaut"
+    return "Données par défaut"
+
+def get_qr_codes():
+    if DB:
+        v = db_get("qr_codes")
+        return v if (v and isinstance(v, dict)) else {}
+    return M["qr_codes"]
+
+def get_presences():
+    if DB: return db_get_presences()
+    if M["presences"]: return pd.DataFrame(M["presences"])
+    return pd.DataFrame(columns=["agent","date_jour","heure","session","statut"])
+
+def get_calendrier():
+    if DB: return db_get_calendrier()
+    if M["calendrier"]: return pd.DataFrame(M["calendrier"])
+    return pd.DataFrame(columns=["date_jour","a_une_note","nom_note","ordre_note"])
+
+def get_justifications():
+    if DB: return db_get_justifications()
+    if M["justifications"]: return pd.DataFrame(M["justifications"])
+    return pd.DataFrame(columns=["agent","date_jour","session","type_absence","motif"])
+
+def get_seuil_note():
+    if DB:
+        v = db_get_seuil("seuil_note_insuffisante")
+        return float(v) if v else 12.0
+    return 12.0
+
+def get_heure_retard(session_type):
+    if "matin" in session_type.lower() or "matin" in session_type.lower():
+        if DB:
+            v = db_get_seuil("heure_retard_matin")
+            return v.strip('"') if v else "08:00"
+        return "08:00"
+    else:
+        if DB:
+            v = db_get_seuil("heure_retard_apres_midi")
+            return v.strip('"') if v else "14:45"
+        return "14:45"
+
+def save_notes(df, label=""):
+    if DB:
+        db_set("notes", df.to_dict("records"))
+        db_set("notes_label", label)
+    else:
+        M["notes"] = df.to_dict("records")
+
+def save_sessions(lst):
+    if DB: db_set("sessions", lst)
+    else: M["sessions"] = lst
+
+def save_qr_codes(qr_map):
+    if DB: db_set("qr_codes", qr_map)
+    else: M["qr_codes"] = qr_map
+
+def add_presence(agent, session, statut="Présent", date_jour=None):
+    if date_jour is None: date_jour = datetime.date.today()
+    now_time = datetime.datetime.now().strftime("%H:%M:%S")
+    # Calcul retard automatique
+    heure_limite = get_heure_retard(session)
+    if now_time > heure_limite and statut == "Présent":
+        statut = "En retard"
+    if DB: return db_add_presence(agent, date_jour, now_time, session, statut)
+    M["presences"].append({"agent":agent,"date_jour":date_jour,
+        "heure":now_time,"session":session,"statut":statut})
+    return True
+
+def is_pointed(agent, session, date_jour=None):
+    if date_jour is None: date_jour = datetime.date.today()
+    if DB: return db_check_pointed(agent, session, date_jour)
+    for p in M["presences"]:
+        if p["agent"]==agent and p["session"]==session and p["date_jour"]==date_jour:
+            return True, p["heure"]
+    return False, None
+
+def add_justification(agent, date_jour, session, type_abs, motif):
+    if DB: return db_add_justification(agent, date_jour, session, type_abs, motif)
+    M["justifications"].append({"agent":agent,"date_jour":date_jour,
+        "session":session,"type_absence":type_abs,"motif":motif})
+    return True
 
 def load_gsheet(url):
     try:
@@ -186,222 +348,724 @@ def load_gsheet(url):
         return df,None
     except Exception as e: return None,str(e)
 
-# ════════════════════════════════════════════════════════════════════════════
+def get_admin_pwd():
+    try: return st.secrets["admin"]["password"]
+    except: return "formation2026"
+
+# ════════════════════════════════════════════════════════════
+# QR CODES
+# ════════════════════════════════════════════════════════════
+QR_PREFIX = "AGENT::"
+def agent_key(name): return f"{QR_PREFIX}{name}"
+def key_to_agent(k): return k.split("::",1)[1] if "::" in k else k
+
+def make_qr_b64(name, box_size=6):
+    qr = qrcode.QRCode(version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_H,
+        box_size=box_size, border=3)
+    qr.add_data(agent_key(name)); qr.make(fit=True)
+    img = qr.make_image(fill_color="#2c3e7a", back_color="white")
+    buf = io.BytesIO(); img.save(buf, format="PNG"); buf.seek(0)
+    return base64.b64encode(buf.getvalue()).decode()
+
+def generate_and_store_qr(agents_list, box_size=6):
+    qr_map = {}
+    prog = st.progress(0, text="Génération des QR codes…")
+    for i, agent in enumerate(agents_list):
+        qr_map[agent] = make_qr_b64(agent, box_size)
+        prog.progress((i+1)/len(agents_list), text=f"{i+1}/{len(agents_list)} — {agent[:28]}…")
+    prog.empty()
+    save_qr_codes(qr_map)
+    if DB: db_get.clear()
+    return qr_map
+
+# ════════════════════════════════════════════════════════════
+# ANALYSE — calculs métier
+# ════════════════════════════════════════════════════════════
+def mention_info(n, seuil=12):
+    if n>=16:    return "Très Bien","badge-tb"
+    elif n>=14:  return "Bien","badge-b"
+    elif n>=seuil: return "Assez Bien","badge-ab"
+    else:        return "Insuffisant","badge-in"
+
+def get_note_cols(df): return [c for c in df.columns if c!=df.columns[0]]
+
+def compute_stats(df, note_cols, name_col, seuil=12):
+    rows=[]
+    for _,row in df.iterrows():
+        vals=[float(row[c]) for c in note_cols]
+        moy=round(np.mean(vals),2); ml,_=mention_info(moy, seuil)
+        rows.append({"Agent":row[name_col],"Moyenne":moy,"Max":max(vals),
+                     "Min":min(vals),"Médiane":round(np.median(vals),2),
+                     "Écart-type":round(np.std(vals),2),"Nb notes":len(vals),"Mention":ml})
+    return pd.DataFrame(rows)
+
+def compute_presence_stats(agents, pres_df, just_df, sessions_list):
+    """Calcule les stats de présence avec retards et justifications."""
+    rows = []
+    for agent in agents:
+        ap = pres_df[pres_df["agent"]==agent] if len(pres_df)>0 else pd.DataFrame()
+        aj = just_df[just_df["agent"]==agent] if len(just_df)>0 else pd.DataFrame()
+        total_sessions = len(sessions_list)
+        nb_present   = len(ap[ap["statut"]=="Présent"]) if len(ap)>0 else 0
+        nb_retard    = len(ap[ap["statut"]=="En retard"]) if len(ap)>0 else 0
+        nb_pointe    = nb_present + nb_retard
+        nb_absent    = total_sessions - nb_pointe
+        nb_just      = len(aj) if len(aj)>0 else 0
+        nb_abs_nj    = max(0, nb_absent - nb_just)
+        taux         = round(nb_pointe/total_sessions*100,1) if total_sessions>0 else 0
+        rows.append({
+            "Agent":agent,
+            "Présent":nb_present,
+            "En retard":nb_retard,
+            "Absent":nb_absent,
+            "Absent justifié":nb_just,
+            "Absent non justifié":nb_abs_nj,
+            "Total sessions":total_sessions,
+            "Taux présence (%)":taux,
+            "Alerte":nb_abs_nj > 0,
+        })
+    return pd.DataFrame(rows)
+
+def compute_profil(moy, taux, seuil_note=12, seuil_presence=75):
+    """Calcule le profil d'un agent selon 4 catégories."""
+    bon_note  = moy >= seuil_note
+    bon_pres  = taux >= seuil_presence
+    if bon_note and bon_pres:     return "🟢 Performant et assidu",    "profil-vert"
+    elif bon_note and not bon_pres: return "🟡 Performant mais absent",  "profil-bleu"
+    elif not bon_note and bon_pres: return "🟠 Présent mais en difficulté","profil-orange"
+    else:                           return "🔴 En difficulté et absent", "profil-rouge"
+
+def compute_cumul_absences_vs_notes(agent, note_cols, df_notes, df_cal, df_pres, name_col):
+    """
+    Pour chaque note du jour N, calcule les absences cumulées J1→Jn.
+    Retourne un DataFrame avec note, date, absences cumulées.
+    """
+    rows = []
+    if len(df_cal) == 0: return pd.DataFrame()
+    agent_notes = df_notes[df_notes[name_col]==agent]
+    if len(agent_notes) == 0: return pd.DataFrame()
+    agent_notes = agent_notes.iloc[0]
+    notes_cal = df_cal[df_cal["a_une_note"]==True].sort_values("date_jour")
+    agent_pres = df_pres[df_pres["agent"]==agent] if len(df_pres)>0 else pd.DataFrame()
+    all_dates = sorted(df_cal["date_jour"].tolist())
+    for i, cal_row in notes_cal.iterrows():
+        nom_note = cal_row["nom_note"]
+        date_note = cal_row["date_jour"]
+        if nom_note not in note_cols: continue
+        note_val = float(agent_notes[nom_note])
+        dates_avant = [d for d in all_dates if d <= date_note]
+        nb_abs = 0
+        for d in dates_avant:
+            if len(agent_pres) > 0:
+                pres_jour = agent_pres[agent_pres["date_jour"]==d]
+                if len(pres_jour) == 0: nb_abs += 2
+                elif len(pres_jour) < 2: nb_abs += 1
+            else:
+                nb_abs += 2
+        rows.append({"Note":nom_note,"Date":date_note,
+                     "Valeur note":note_val,"Absences cumulées":nb_abs})
+    return pd.DataFrame(rows)
+
+# ════════════════════════════════════════════════════════════
+# EXPORTS
+# ════════════════════════════════════════════════════════════
+def export_couleur_excel(df, note_cols, name_col, df_stats, seuil=12):
+    from openpyxl import Workbook
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    buf = io.BytesIO(); WB = Workbook(); ws = WB.active; ws.title = "Notes couleur"
+    COLORS = {"tb":("1e7e34","c6efce"),"b":("1a56db","bdd7ee"),
+              "ab":("92400e","ffeb9c"),"in":("b91c1c","ffc7ce")}
+    ARROWS = {"tb":"▲","b":"→","ab":"→","in":"▼"}
+    def get_cat(n):
+        if n>=16: return "tb"
+        elif n>=14: return "b"
+        elif n>=seuil: return "ab"
+        else: return "in"
+    thin = Border(left=Side(style='thin'),right=Side(style='thin'),
+                  top=Side(style='thin'),bottom=Side(style='thin'))
+    headers=[name_col]+note_cols+["Moyenne","Mention"]
+    for ci,h in enumerate(headers,1):
+        c=ws.cell(row=1,column=ci,value=h)
+        c.font=Font(bold=True,color="FFFFFF")
+        c.fill=PatternFill("solid",fgColor="2c3e7a")
+        c.alignment=Alignment(horizontal="center",vertical="center"); c.border=thin
+    for ri,row in df.iterrows():
+        r=ri+2
+        ws.cell(row=r,column=1,value=row[name_col]).border=thin
+        for ci,col in enumerate(note_cols,2):
+            v=float(row[col]); cat=get_cat(v); fc,bg=COLORS[cat]
+            c=ws.cell(row=r,column=ci,value=f"{ARROWS[cat]} {int(v)}")
+            c.fill=PatternFill("solid",fgColor=bg); c.font=Font(color=fc,bold=True)
+            c.alignment=Alignment(horizontal="center"); c.border=thin
+        moy_v=df_stats[df_stats["Agent"]==row[name_col]]["Moyenne"].values
+        moy_val=moy_v[0] if len(moy_v)>0 else 0
+        cat=get_cat(moy_val); fc,bg=COLORS[cat]
+        cm=ws.cell(row=r,column=len(note_cols)+2,value=f"{ARROWS[cat]} {moy_val:.2f}")
+        cm.fill=PatternFill("solid",fgColor=bg); cm.font=Font(color=fc,bold=True)
+        cm.alignment=Alignment(horizontal="center"); cm.border=thin
+        ml,_=mention_info(moy_val,seuil)
+        ws.cell(row=r,column=len(note_cols)+3,value=ml).border=thin
+    ws.column_dimensions["A"].width=32
+    for ci in range(2,len(headers)+1):
+        ws.column_dimensions[get_column_letter(ci)].width=14
+    # Légende
+    lr=len(df)+4
+    ws.cell(row=lr,column=1,value="LÉGENDE").font=Font(bold=True)
+    for i,(lbl,cat) in enumerate([("▲ Très Bien (≥16)","tb"),("→ Bien (14-15)","b"),
+                                    (f"→ Assez Bien ({seuil}-13)","ab"),(f"▼ Insuffisant (<{seuil})","in")]):
+        fc,bg=COLORS[cat]; c=ws.cell(row=lr+1+i,column=1,value=lbl)
+        c.fill=PatternFill("solid",fgColor=bg); c.font=Font(color=fc,bold=True)
+    WB.save(buf); buf.seek(0); return buf.getvalue()
+
+def export_stats_excel(df, note_cols, name_col, df_stats, df_pres_stats):
+    from openpyxl import Workbook
+    from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+    buf = io.BytesIO(); WB = Workbook()
+    thin = Border(left=Side(style='thin'),right=Side(style='thin'),
+                  top=Side(style='thin'),bottom=Side(style='thin'))
+
+    # Feuille 1 : Notes
+    ws1=WB.active; ws1.title="Notes individuelles"
+    h1=[name_col]+note_cols+["Moyenne","Médiane","Écart-type","Mention"]
+    for ci,h in enumerate(h1,1):
+        c=ws1.cell(row=1,column=ci,value=h)
+        c.font=Font(bold=True,color="FFFFFF")
+        c.fill=PatternFill("solid",fgColor="4a6cf7")
+        c.alignment=Alignment(horizontal="center"); c.border=thin
+    for ri,row in df.iterrows():
+        r=ri+2; ws1.cell(row=r,column=1,value=row[name_col]).border=thin
+        for ci,col in enumerate(note_cols,2):
+            c=ws1.cell(row=r,column=ci,value=float(row[col]))
+            c.alignment=Alignment(horizontal="center"); c.border=thin
+        s=df_stats[df_stats["Agent"]==row[name_col]]
+        if len(s)>0:
+            s=s.iloc[0]
+            for ci2,val in enumerate([s["Moyenne"],s["Médiane"],s["Écart-type"],s["Mention"]],len(note_cols)+2):
+                c=ws1.cell(row=r,column=ci2,value=val)
+                c.alignment=Alignment(horizontal="center"); c.border=thin
+                if ci2==len(note_cols)+2:
+                    v=s["Moyenne"]
+                    bg=("c6efce" if v>=16 else "bdd7ee" if v>=14 else "ffeb9c" if v>=12 else "ffc7ce")
+                    c.fill=PatternFill("solid",fgColor=bg); c.font=Font(bold=True)
+    ws1.column_dimensions["A"].width=32
+    for ci in range(2,len(h1)+1): ws1.column_dimensions[get_column_letter(ci)].width=13
+    ws1.freeze_panes="B2"
+
+    # Feuille 2 : Présences
+    if df_pres_stats is not None and len(df_pres_stats)>0:
+        ws2=WB.create_sheet("Présences")
+        h2=list(df_pres_stats.columns)
+        for ci,h in enumerate(h2,1):
+            c=ws2.cell(row=1,column=ci,value=h)
+            c.font=Font(bold=True,color="FFFFFF")
+            c.fill=PatternFill("solid",fgColor="2c3e7a")
+            c.alignment=Alignment(horizontal="center"); c.border=thin
+        for ri,row in df_pres_stats.iterrows():
+            r=ri+2
+            for ci,col in enumerate(h2,1):
+                v=row[col]
+                c=ws2.cell(row=r,column=ci,value=v)
+                c.alignment=Alignment(horizontal="center"); c.border=thin
+                if col=="Absent non justifié" and v>0:
+                    c.fill=PatternFill("solid",fgColor="ffc7ce")
+                    c.font=Font(color="b91c1c",bold=True)
+                if col=="Alerte":
+                    c.value="⚠️ OUI" if v else "✅ OK"
+                    if v: c.fill=PatternFill("solid",fgColor="ffc7ce")
+        ws2.column_dimensions["A"].width=32
+        for ci in range(2,len(h2)+1): ws2.column_dimensions[get_column_letter(ci)].width=16
+
+    # Feuille 3 : Croisement notes × présences + profils
+    if df_pres_stats is not None and len(df_pres_stats)>0:
+        ws3=WB.create_sheet("Profils agents")
+        df_croise=df_stats.merge(df_pres_stats[["Agent","Taux présence (%)","Absent non justifié","Alerte"]],
+                                  on="Agent",how="left").fillna(0)
+        df_croise["Profil"]=df_croise.apply(
+            lambda r: compute_profil(r["Moyenne"],r["Taux présence (%)"])[0], axis=1)
+        h3=["Agent","Moyenne","Mention","Taux présence (%)","Absent non justifié","Alerte","Profil"]
+        for ci,h in enumerate(h3,1):
+            c=ws3.cell(row=1,column=ci,value=h)
+            c.font=Font(bold=True,color="FFFFFF")
+            c.fill=PatternFill("solid",fgColor="2c3e7a")
+            c.alignment=Alignment(horizontal="center"); c.border=thin
+        PROFIL_COLORS={"🟢":"c6efce","🟡":"ffeb9c","🟠":"ffe0b2","🔴":"ffc7ce"}
+        for ri,row in df_croise.iterrows():
+            r=ri+2
+            for ci,col in enumerate(h3,1):
+                v=row[col]; c=ws3.cell(row=r,column=ci,value=v)
+                c.alignment=Alignment(horizontal="center"); c.border=thin
+                if col=="Alerte": c.value="⚠️ OUI" if v else "✅ OK"
+                if col=="Profil":
+                    emoji=str(v)[:2]
+                    bg=PROFIL_COLORS.get(emoji,"FFFFFF")
+                    c.fill=PatternFill("solid",fgColor=bg)
+        ws3.column_dimensions["A"].width=32
+        for ci in range(2,len(h3)+1): ws3.column_dimensions[get_column_letter(ci)].width=20
+
+    # Feuille 4 : Stats globales
+    ws4=WB.create_sheet("Synthèse")
+    all_v=df[note_cols].values.flatten().astype(float)
+    stats_g=[
+        ("Nombre d'agents",len(df)),
+        ("Nombre d'évaluations",len(note_cols)),
+        ("Moyenne générale",round(np.mean(all_v),2)),
+        ("Note maximum",int(df[note_cols].max().max())),
+        ("Note minimum",int(df[note_cols].min().min())),
+        ("Très Bien (≥16)",len(df_stats[df_stats["Mention"]=="Très Bien"])),
+        ("Bien (14-15)",len(df_stats[df_stats["Mention"]=="Bien"])),
+        ("Assez Bien",len(df_stats[df_stats["Mention"]=="Assez Bien"])),
+        ("Insuffisant",len(df_stats[df_stats["Mention"]=="Insuffisant"])),
+        ("Notes 20/20",int((df[note_cols]==20).sum().sum())),
+        ("Notes = 0",int((df[note_cols]==0).sum().sum())),
+    ]
+    for ci,h in enumerate(["Indicateur","Valeur"],1):
+        c=ws4.cell(row=1,column=ci,value=h)
+        c.font=Font(bold=True,color="FFFFFF")
+        c.fill=PatternFill("solid",fgColor="2c3e7a")
+        c.alignment=Alignment(horizontal="center"); c.border=thin
+    for ri,(k,v) in enumerate(stats_g,2):
+        ws4.cell(row=ri,column=1,value=k).border=thin
+        ws4.cell(row=ri,column=2,value=v).border=thin
+    ws4.column_dimensions["A"].width=28; ws4.column_dimensions["B"].width=16
+
+    WB.save(buf); buf.seek(0); return buf.getvalue()
+
+def export_pdf_direction(df_stats, df_pres_stats, note_cols, agents):
+    """Rapport PDF de synthèse pour la direction."""
+    if not PDF_OK: return None
+    from fpdf import FPDF
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 20)
+    pdf.set_text_color(44, 62, 122)
+    pdf.cell(0, 12, "RAPPORT DE FORMATION", ln=True, align="C")
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(107, 125, 179)
+    pdf.cell(0, 8, f"Généré le {datetime.date.today().strftime('%d/%m/%Y')}", ln=True, align="C")
+    pdf.ln(6)
+
+    # Stats globales
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(44, 62, 122)
+    pdf.cell(0, 10, "1. Statistiques générales", ln=True)
+    pdf.set_draw_color(74, 108, 247)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+    pdf.ln(4)
+
+    all_v = df_stats["Moyenne"].values
+    pdf.set_font("Helvetica", "", 11)
+    pdf.set_text_color(26, 26, 46)
+    stats = [
+        (f"Nombre d'agents", len(agents)),
+        (f"Nombre d'évaluations", len(note_cols)),
+        (f"Moyenne générale", round(np.mean(all_v),2)),
+        (f"Très Bien (≥16)", len(df_stats[df_stats["Mention"]=="Très Bien"])),
+        (f"Bien (14-15)", len(df_stats[df_stats["Mention"]=="Bien"])),
+        (f"Assez Bien", len(df_stats[df_stats["Mention"]=="Assez Bien"])),
+        (f"Insuffisant", len(df_stats[df_stats["Mention"]=="Insuffisant"])),
+    ]
+    for k,v in stats:
+        pdf.cell(100, 8, k, border="B")
+        pdf.cell(90, 8, str(v), border="B", ln=True, align="C")
+    pdf.ln(8)
+
+    # Classement top 5
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(44, 62, 122)
+    pdf.cell(0, 10, "2. Top 5 agents", ln=True)
+    pdf.set_draw_color(74, 108, 247)
+    pdf.line(10, pdf.get_y(), 200, pdf.get_y()); pdf.ln(4)
+    top5 = df_stats.sort_values("Moyenne", ascending=False).head(5)
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(44, 62, 122); pdf.set_text_color(255,255,255)
+    pdf.cell(10,8,"#",fill=True,border=1,align="C")
+    pdf.cell(110,8,"Agent",fill=True,border=1)
+    pdf.cell(40,8,"Moyenne",fill=True,border=1,align="C")
+    pdf.cell(30,8,"Mention",fill=True,border=1,align="C",ln=True)
+    pdf.set_font("Helvetica","",10); pdf.set_text_color(26,26,46)
+    for i,(_, row) in enumerate(top5.iterrows(), 1):
+        pdf.set_fill_color(240,244,255) if i%2==0 else pdf.set_fill_color(255,255,255)
+        pdf.cell(10,8,str(i),fill=True,border=1,align="C")
+        pdf.cell(110,8,str(row["Agent"])[:45],fill=True,border=1)
+        pdf.cell(40,8,f"{row['Moyenne']:.2f}/20",fill=True,border=1,align="C")
+        pdf.cell(30,8,str(row["Mention"]),fill=True,border=1,align="C",ln=True)
+    pdf.ln(8)
+
+    # Alertes
+    if df_pres_stats is not None and len(df_pres_stats)>0:
+        alertes = df_pres_stats[df_pres_stats["Alerte"]==True]
+        pdf.set_font("Helvetica","B",14)
+        pdf.set_text_color(44,62,122)
+        pdf.cell(0,10,f"3. Alertes — {len(alertes)} agent(s) en situation critique",ln=True)
+        pdf.set_draw_color(231,76,60)
+        pdf.line(10,pdf.get_y(),200,pdf.get_y()); pdf.ln(4)
+        if len(alertes)>0:
+            pdf.set_font("Helvetica","B",10)
+            pdf.set_fill_color(44,62,122); pdf.set_text_color(255,255,255)
+            pdf.cell(110,8,"Agent",fill=True,border=1)
+            pdf.cell(40,8,"Absent non justifié",fill=True,border=1,align="C")
+            pdf.cell(40,8,"Taux présence",fill=True,border=1,align="C",ln=True)
+            pdf.set_font("Helvetica","",10); pdf.set_text_color(26,26,46)
+            for _,row in alertes.iterrows():
+                pdf.set_fill_color(255,235,235)
+                pdf.cell(110,8,str(row["Agent"])[:45],fill=True,border=1)
+                pdf.cell(40,8,str(row["Absent non justifié"]),fill=True,border=1,align="C")
+                pdf.cell(40,8,f"{row['Taux présence (%)']:.1f}%",fill=True,border=1,align="C",ln=True)
+        else:
+            pdf.set_font("Helvetica","",11); pdf.set_text_color(30,126,52)
+            pdf.cell(0,8,"Aucune alerte — tous les agents sont dans les normes.",ln=True)
+
+    pdf.ln(8)
+    pdf.set_font("Helvetica","I",9); pdf.set_text_color(160,174,192)
+    pdf.cell(0,6,"Rapport généré automatiquement par la Plateforme Formation",align="C")
+    return bytes(pdf.output())
+
+# ════════════════════════════════════════════════════════════
 # SESSION STATE
-# ════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════
+sessions = get_sessions()
 for k,v in {
-    "camera_on":False,"last_scan_agent":None,"last_scan_time":None,
-    "admin_logged_in":False,
-    "session_active":shared["sessions_config"][0],
+    "admin_ok":False,"camera_on":False,
+    "last_agent":None,"last_time":None,
+    "session_active": sessions[0] if sessions else "Session 1",
 }.items():
     if k not in st.session_state: st.session_state[k]=v
+if st.session_state.session_active not in sessions:
+    st.session_state.session_active = sessions[0]
 
-# ════════════════════════════════════════════════════════════════════════════
-# CHARGEMENT
-# ════════════════════════════════════════════════════════════════════════════
-df        = get_notes_df()
-name_col  = df.columns[0]
-note_cols = get_note_cols(df)
-agents    = df[name_col].tolist()
-df_stats  = compute_stats(df, note_cols, name_col)
-all_vals  = df[note_cols].values.flatten().astype(float)
-pres_df   = get_presences_df()
+# ════════════════════════════════════════════════════════════
+# CHARGEMENT DONNÉES
+# ════════════════════════════════════════════════════════════
+df         = get_notes()
+name_col   = df.columns[0]
+note_cols  = get_note_cols(df)
+agents     = df[name_col].tolist()
+seuil_note = get_seuil_note()
+df_stats   = compute_stats(df, note_cols, name_col, seuil_note)
+all_vals   = df[note_cols].values.flatten().astype(float)
+pres_df    = get_presences()
+just_df    = get_justifications()
+cal_df     = get_calendrier()
+label      = get_notes_label()
+df_pres_stats = compute_presence_stats(agents, pres_df, just_df, sessions)
 
-# ════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════
 # SIDEBAR
-# ════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════
 with st.sidebar:
-    st.markdown(f'<div class="shared-banner">📡 <b>{shared["notes_label"]}</b><br>'
-                f'<small>{len(agents)} agents · {len(note_cols)} évaluations</small></div>',
-                unsafe_allow_html=True)
-    if st.session_state.session_active not in shared["sessions_config"]:
-        st.session_state.session_active = shared["sessions_config"][0]
+    if DB:
+        st.markdown('<div class="db-ok">🟢 <b>Supabase connecté</b><br>'
+                    '<small>Données persistantes · synchro auto</small></div>',
+                    unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="db-warn">⚠️ <b>Mode mémoire</b><br>'
+                    '<small>Configurez Supabase dans secrets.toml</small></div>',
+                    unsafe_allow_html=True)
+    st.markdown(f"**Source :** {label}")
+    st.markdown(f"**{len(agents)}** agents · **{len(note_cols)}** évaluations")
+    st.markdown("---")
     st.markdown("### 🗓️ Session active")
     st.session_state.session_active = st.selectbox(
-        "Session", shared["sessions_config"],
-        index=shared["sessions_config"].index(st.session_state.session_active),
+        "Session", sessions,
+        index=sessions.index(st.session_state.session_active)
+              if st.session_state.session_active in sessions else 0,
         label_visibility="collapsed")
     st.markdown("---")
     st.markdown("### 🔍 Filtres")
-    selected_agents = st.multiselect("Agents (courbes)", options=agents, default=agents[:5])
+    sel_agents = st.multiselect("Agents (courbes)", options=agents, default=agents[:5])
     note_range = st.slider("Filtre moyenne", 0.0, 20.0, (0.0,20.0), 0.5)
     st.markdown("---")
-    nb_pts=len(pres_df)
-    nb_sess=len(pres_df[pres_df["Session"]==st.session_state.session_active]["Agent"].unique()) if nb_pts>0 else 0
+    nb_pts  = len(pres_df)
+    nb_sess = len(pres_df[pres_df["session"]==st.session_state.session_active]) if nb_pts>0 else 0
     st.metric("Total pointages", nb_pts)
     st.metric("Présents session", nb_sess)
+    nb_alertes = len(df_pres_stats[df_pres_stats["Alerte"]==True])
+    if nb_alertes > 0:
+        st.error(f"⚠️ {nb_alertes} alerte(s) absence")
+    if DB and st.button("🔄 Actualiser"):
+        db_get.clear(); db_get_presences.clear()
+        db_get_justifications.clear(); db_get_calendrier.clear()
+        st.rerun()
 
-# ════════════════════════════════════════════════════════════════════════════
-# EN-TÊTE
-# ════════════════════════════════════════════════════════════════════════════
-st.markdown('<div class="main-title">📊 Formation — Notes & Présences</div>',unsafe_allow_html=True)
+# ════════════════════════════════════════════════════════════
+# EN-TÊTE + KPI
+# ════════════════════════════════════════════════════════════
+st.markdown('<div class="main-title">📊 Plateforme Formation — Direction</div>',unsafe_allow_html=True)
 st.markdown(f'<div class="sub-title">{len(agents)} agents · {len(note_cols)} évaluations · '
-            f'<b>{shared["notes_label"]}</b> · Session : <b>{st.session_state.session_active}</b></div>',
+            f'<b>{label}</b> · Session : <b>{st.session_state.session_active}</b></div>',
             unsafe_allow_html=True)
 
-# ── KPI — 9 indicateurs ─────────────────────────────────────────────────────
-moy_gen   = round(np.mean(all_vals), 2)
-moy_max_a = round(df[note_cols].astype(float).max(axis=1).mean(), 2)
-moy_min_a = round(df[note_cols].astype(float).min(axis=1).mean(), 2)
+moy_gen   = round(np.mean(all_vals),2)
+moy_max_a = round(df[note_cols].astype(float).max(axis=1).mean(),2)
+moy_min_a = round(df[note_cols].astype(float).min(axis=1).mean(),2)
 nb_20     = int((df[note_cols]==20).sum().sum())
 nb_zero   = int((df[note_cols]==0).sum().sum())
-nb_tb     = len(df_stats[df_stats["Mention"]=="Très Bien"])
-nb_insuf  = len(df_stats[df_stats["Mention"]=="Insuffisant"])
 
-row1 = st.columns(5)
-row2 = st.columns(4)
-kpi_r1 = [
-    (moy_gen,   "Moyenne Générale",  "toutes notes"),
-    (moy_max_a, "Moy. Max/Agent",    "meilleur score moyen"),
-    (moy_min_a, "Moy. Min/Agent",    "score le plus bas moyen"),
-    (nb_20,     "Notes 20/20",       "scores parfaits"),
-    (nb_zero,   "Notes = 0",         "zéros obtenus"),
-]
-kpi_r2 = [
-    (nb_tb,    "Très Bien",      f"sur {len(agents)} agents"),
-    (len(df_stats[df_stats["Mention"]=="Bien"]), "Bien", f"sur {len(agents)} agents"),
-    (len(df_stats[df_stats["Mention"]=="Assez Bien"]), "Assez Bien", f"sur {len(agents)} agents"),
-    (nb_insuf, "Insuffisant",   f"sur {len(agents)} agents"),
-]
-for col,(val,label,sub) in zip(row1,kpi_r1):
+r1 = st.columns(5)
+for col,(val,lbl,sub) in zip(r1,[
+    (moy_gen,"Moyenne Générale","toutes notes"),
+    (moy_max_a,"Moy. Max/Agent","meilleur score moyen"),
+    (moy_min_a,"Moy. Min/Agent","score le plus bas moyen"),
+    (nb_20,"Notes 20/20","scores parfaits"),
+    (nb_zero,"Notes = 0","zéros obtenus"),
+]):
     col.markdown(f'<div class="kpi-card"><div class="kpi-value">{val}</div>'
-                 f'<div class="kpi-label">{label}</div><div class="kpi-sub">{sub}</div></div>',
+                 f'<div class="kpi-label">{lbl}</div><div class="kpi-sub">{sub}</div></div>',
                  unsafe_allow_html=True)
 st.markdown("<br>",unsafe_allow_html=True)
-for col,(val,label,sub) in zip(row2,kpi_r2):
+r2 = st.columns(4)
+for col,(val,lbl,sub) in zip(r2,[
+    (len(df_stats[df_stats["Mention"]=="Très Bien"]),"Très Bien",f"sur {len(agents)} agents"),
+    (len(df_stats[df_stats["Mention"]=="Bien"]),"Bien",f"sur {len(agents)} agents"),
+    (len(df_stats[df_stats["Mention"]=="Assez Bien"]),"Assez Bien",f"sur {len(agents)} agents"),
+    (len(df_stats[df_stats["Mention"]=="Insuffisant"]),"Insuffisant",f"sur {len(agents)} agents"),
+]):
     col.markdown(f'<div class="kpi-card"><div class="kpi-value">{val}</div>'
-                 f'<div class="kpi-label">{label}</div><div class="kpi-sub">{sub}</div></div>',
+                 f'<div class="kpi-label">{lbl}</div><div class="kpi-sub">{sub}</div></div>',
                  unsafe_allow_html=True)
 st.markdown("<br>",unsafe_allow_html=True)
 
-# ════════════════════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════
 # ONGLETS
-# ════════════════════════════════════════════════════════════════════════════
-(tab_pres, tab_croise, tab_notes, tab_tendance,
- tab_stats, tab_heatmap, tab_podium, tab_admin) = st.tabs([
+# ════════════════════════════════════════════════════════════
+(tab_pres, tab_alertes, tab_analyse, tab_croise,
+ tab_notes, tab_heatmap, tab_podium,
+ tab_export, tab_kiosque, tab_admin) = st.tabs([
     "👥 Présences",
+    "⚠️ Alertes",
+    "📊 Analyse cumulative",
     "🔗 Notes × Présences",
-    "📈 Courbes",
-    "🌐 Tendance",
-    "📋 Stats",
+    "📈 Courbes notes",
     "🔥 Heatmap",
     "🏆 Classement",
+    "📤 Exports",
+    "📷 Kiosque scanner",
     "🔐 Admin",
 ])
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PRÉSENCES
-# ─────────────────────────────────────────────────────────────────────────────
+# ── PRÉSENCES ─────────────────────────────────────────────────────────────
 with tab_pres:
-    st.markdown('<div class="section-title">👥 Statistiques de présence</div>',unsafe_allow_html=True)
-    pres_v=get_presences_df()
-    if len(pres_v)==0:
-        st.info("Aucun pointage. L'administrateur peut pointer les présences dans l'onglet **🔐 Admin**.")
+    st.markdown('<div class="section-title">👥 Présences & Ponctualité</div>',unsafe_allow_html=True)
+    if len(pres_df)==0:
+        st.info("Aucun pointage. Utilisez le **📷 Kiosque scanner** ou pointez dans **🔐 Admin**.")
     else:
-        df_ps=presence_stats(agents)
-        nb_p=len(df_ps[df_ps["Présences"]>0])
-        taux_m=round(df_ps[df_ps["Présences"]>0]["Taux (%)"].mean(),1) if nb_p>0 else 0
-        pa,pb,pc,pd_=st.columns(4)
-        for col,(val,lbl,sub) in zip([pa,pb,pc,pd_],[
-            (f"{taux_m}%","Taux moyen","agents pointés"),
-            (nb_p,"Agents pointés","≥ 1 session"),
-            (len(df_ps[df_ps["Statut"]=="Assidu"]),"Assidus ≥80%","agents"),
-            (len(pres_v),"Total pointages","enregistrés"),
+        pa,pb,pc,pd_,pe=st.columns(5)
+        total_p=df_pres_stats["Présent"].sum()
+        total_r=df_pres_stats["En retard"].sum()
+        total_a=df_pres_stats["Absent"].sum()
+        total_aj=df_pres_stats["Absent justifié"].sum()
+        total_anj=df_pres_stats["Absent non justifié"].sum()
+        for col,(val,lbl,sub) in zip([pa,pb,pc,pd_,pe],[
+            (int(total_p),"Présences","total"),
+            (int(total_r),"Retards","total"),
+            (int(total_a),"Absences","total"),
+            (int(total_aj),"Abs. justifiées","avec motif"),
+            (int(total_anj),"Abs. non justifiées","⚠️ alertes"),
         ]):
             col.markdown(f'<div class="kpi-card"><div class="kpi-value">{val}</div>'
                          f'<div class="kpi-label">{lbl}</div><div class="kpi-sub">{sub}</div></div>',
                          unsafe_allow_html=True)
         st.markdown("<br>",unsafe_allow_html=True)
-        df_s=df_ps[df_ps["Présences"]>0].sort_values("Taux (%)",ascending=True)
-        if len(df_s)>0:
-            cp=["#27ae60" if t>=80 else "#f39c12" if t>=50 else "#e74c3c" for t in df_s["Taux (%)"]]
-            fig_p=go.Figure(go.Bar(x=df_s["Taux (%)"],y=df_s["Agent"],orientation="h",
-                marker=dict(color=cp,line=dict(color="white",width=0.5)),
-                text=[f"{v}%" for v in df_s["Taux (%)"]],textposition="outside"))
-            fig_p.update_layout(paper_bgcolor="white",plot_bgcolor="white",
-                font=dict(family="DM Sans",color="#2c3e7a"),
-                xaxis=dict(range=[0,118],gridcolor="#f0f4ff"),
-                yaxis=dict(autorange="reversed",tickfont=dict(size=10)),
-                height=max(360,len(df_s)*30),margin=dict(t=20,b=40,l=230,r=60),showlegend=False,
-                shapes=[dict(type="line",xref="x",x0=80,x1=80,yref="paper",y0=0,y1=1,
-                             line=dict(color="#27ae60",width=1.5,dash="dot"))])
-            st.plotly_chart(fig_p,use_container_width=True)
-        def spr(row):
-            return [("background-color:#e6f4ea;color:#1e7e34" if row[c]>=80 else
-                     "background-color:#fef3c7;color:#92400e" if row[c]>=50 else
-                     "background-color:#fee2e2;color:#b91c1c" if row[c]>0 else
-                     "background-color:#f9fafb;color:#9ca3af") if c=="Taux (%)" else ""
-                    for c in row.index]
-        st.dataframe(df_ps.sort_values("Taux (%)",ascending=False).reset_index(drop=True)
-                     .style.apply(spr,axis=1).format({"Taux (%)":"{:.1f}%"}),
-                     use_container_width=True,height=400)
-        buf_p=io.BytesIO()
-        with pd.ExcelWriter(buf_p,engine="openpyxl") as w:
-            pres_v.to_excel(w,sheet_name="Pointages",index=False)
-            df_ps.to_excel(w,sheet_name="Stats présences",index=False)
-        st.download_button("⬇️ Exporter présences",buf_p.getvalue(),
-            file_name="presences.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CROISEMENT
-# ─────────────────────────────────────────────────────────────────────────────
+        # Graphique taux présence
+        ds=df_pres_stats.sort_values("Taux présence (%)",ascending=True)
+        cp=["#27ae60" if t>=75 else "#f39c12" if t>=50 else "#e74c3c" for t in ds["Taux présence (%)"]]
+        fp=go.Figure(go.Bar(x=ds["Taux présence (%)"],y=ds["Agent"],orientation="h",
+            marker=dict(color=cp,line=dict(color="white",width=0.5)),
+            text=[f"{v}%" for v in ds["Taux présence (%)"]],textposition="outside"))
+        fp.update_layout(paper_bgcolor="white",plot_bgcolor="white",
+            font=dict(family="DM Sans",color="#2c3e7a"),
+            xaxis=dict(range=[0,118],gridcolor="#f0f4ff"),
+            yaxis=dict(autorange="reversed",tickfont=dict(size=10)),
+            height=max(360,len(ds)*30),margin=dict(t=20,b=40,l=230,r=60),showlegend=False,
+            shapes=[dict(type="line",xref="x",x0=75,x1=75,yref="paper",y0=0,y1=1,
+                         line=dict(color="#27ae60",width=1.5,dash="dot"))])
+        st.plotly_chart(fp,use_container_width=True)
+
+        # Tableau détaillé
+        def spr(row):
+            return [("background-color:#fee2e2;color:#b91c1c" if row[c]>0 else "") if c=="Absent non justifié"
+                    else ("background-color:#fef3c7;color:#92400e" if row[c]>0 else "") if c=="En retard"
+                    else ("background-color:#e6f4ea;color:#1e7e34" if not row[c] else "background-color:#fee2e2;color:#b91c1c") if c=="Alerte"
+                    else "" for c in row.index]
+        df_show=df_pres_stats.copy()
+        df_show["Alerte"]=df_show["Alerte"].map({True:"⚠️ OUI",False:"✅ OK"})
+        st.dataframe(df_show.style.apply(spr,axis=1).format({"Taux présence (%)":"{:.1f}%"}),
+                     use_container_width=True,height=420)
+
+        # Justifier une absence
+        st.markdown('<div class="section-title">✏️ Justifier une absence / retard</div>',
+                    unsafe_allow_html=True)
+        with st.form("form_just"):
+            cj1,cj2,cj3=st.columns(3)
+            with cj1: ag_j=st.selectbox("Agent",agents)
+            with cj2: date_j=st.date_input("Date",value=datetime.date.today())
+            with cj3: sess_j=st.selectbox("Session",sessions)
+            cj4,cj5=st.columns(2)
+            with cj4: type_j=st.selectbox("Type",["Absence","Retard"])
+            with cj5: motif_j=st.selectbox("Motif",MOTIFS)
+            if st.form_submit_button("✅ Enregistrer la justification",use_container_width=True):
+                add_justification(ag_j,date_j,sess_j,type_j,motif_j)
+                st.success(f"✅ Justification enregistrée pour {ag_j}"); st.rerun()
+
+# ── ALERTES ───────────────────────────────────────────────────────────────
+with tab_alertes:
+    st.markdown('<div class="section-title">⚠️ Alertes — Agents en situation critique</div>',
+                unsafe_allow_html=True)
+    alertes_df = df_pres_stats[df_pres_stats["Alerte"]==True]
+    insuf_df   = df_stats[df_stats["Mention"]=="Insuffisant"]
+
+    ca,cb=st.columns(2)
+    with ca:
+        st.markdown(f"**{len(alertes_df)} agent(s) avec absence non justifiée :**")
+        if len(alertes_df)>0:
+            for _,row in alertes_df.iterrows():
+                st.markdown(f'<div class="alerte-rouge">⚠️ <b>{row["Agent"]}</b> — '
+                            f'{row["Absent non justifié"]} abs. non justifiée(s) · '
+                            f'Taux : {row["Taux présence (%)"]:.1f}%</div>',
+                            unsafe_allow_html=True)
+        else:
+            st.success("✅ Aucune absence non justifiée")
+    with cb:
+        st.markdown(f"**{len(insuf_df)} agent(s) en dessous du seuil ({seuil_note}/20) :**")
+        if len(insuf_df)>0:
+            for _,row in insuf_df.iterrows():
+                st.markdown(f'<div class="alerte-orange">📉 <b>{row["Agent"]}</b> — '
+                            f'Moyenne : {row["Moyenne"]:.2f}/20</div>',
+                            unsafe_allow_html=True)
+        else:
+            st.success("✅ Tous les agents sont au-dessus du seuil")
+
+    # Profils combinés
+    st.markdown('<div class="section-title">🎯 Profils combinés Notes + Présences</div>',
+                unsafe_allow_html=True)
+    if len(df_pres_stats)>0:
+        df_profils=df_stats.merge(df_pres_stats[["Agent","Taux présence (%)"]],on="Agent",how="left").fillna(0)
+        df_profils["Profil"]=df_profils.apply(
+            lambda r: compute_profil(r["Moyenne"],r["Taux présence (%)"],seuil_note)[0], axis=1)
+        for profil,group in df_profils.groupby("Profil"):
+            emoji=str(profil)[:2]
+            css={"🟢":"profil-vert","🟡":"profil-bleu","🟠":"profil-orange","🔴":"profil-rouge"}.get(emoji,"profil-vert")
+            agents_str=" · ".join(group["Agent"].tolist())
+            st.markdown(f'<div class="{css}"><b>{profil}</b> ({len(group)} agents)<br>'
+                        f'<small>{agents_str}</small></div>',unsafe_allow_html=True)
+
+# ── ANALYSE CUMULATIVE ────────────────────────────────────────────────────
+with tab_analyse:
+    st.markdown('<div class="section-title">📊 Analyse cumulative — Absences → Impact sur notes</div>',
+                unsafe_allow_html=True)
+    st.caption("Pour chaque note, on regarde les absences accumulées depuis le début de la formation.")
+    if len(cal_df)==0:
+        st.info("Configurez le calendrier dans **🔐 Admin → 🗓️ Calendrier** pour activer cette analyse.")
+    else:
+        agent_sel_a = st.selectbox("Sélectionner un agent", agents, key="sel_analyse")
+        df_cumul = compute_cumul_absences_vs_notes(
+            agent_sel_a, note_cols, df, cal_df, pres_df, name_col)
+        if len(df_cumul)>0:
+            fig_cumul = go.Figure()
+            fig_cumul.add_trace(go.Scatter(
+                x=df_cumul["Note"], y=df_cumul["Valeur note"],
+                mode="lines+markers+text", name="Note",
+                line=dict(color="#4a6cf7",width=3,shape="spline"),
+                marker=dict(size=10,color="#4a6cf7",line=dict(color="white",width=2)),
+                text=[str(int(v)) for v in df_cumul["Valeur note"]],
+                textposition="top center", textfont=dict(size=10,color="#2c3e7a"),
+                yaxis="y1"))
+            fig_cumul.add_trace(go.Bar(
+                x=df_cumul["Note"], y=df_cumul["Absences cumulées"],
+                name="Absences cumulées", opacity=0.4,
+                marker=dict(color="#e74c3c"),
+                yaxis="y2"))
+            fig_cumul.update_layout(
+                paper_bgcolor="white",plot_bgcolor="white",
+                font=dict(family="DM Sans",color="#2c3e7a"),
+                xaxis=dict(title="Évaluation",gridcolor="#f0f4ff"),
+                yaxis=dict(title="Note /20",range=[0,21],gridcolor="#f0f4ff",side="left"),
+                yaxis2=dict(title="Absences cumulées",overlaying="y",side="right",
+                            range=[0,max(df_cumul["Absences cumulées"].max()*2,4)],
+                            showgrid=False),
+                legend=dict(bgcolor="rgba(255,255,255,.95)"),
+                hovermode="x unified",height=420,
+                margin=dict(t=30,b=40,l=50,r=60),
+                shapes=[dict(type="line",xref="paper",x0=0,x1=1,yref="y",
+                             y0=seuil_note,y1=seuil_note,
+                             line=dict(color="#e74c3c",width=1.5,dash="dot"))])
+            st.plotly_chart(fig_cumul,use_container_width=True)
+            st.dataframe(df_cumul,use_container_width=True,hide_index=True)
+        else:
+            st.warning("Pas assez de données pour cet agent. Vérifiez le calendrier.")
+
+# ── CROISEMENT ───────────────────────────────────────────────────────────
 with tab_croise:
-    st.markdown('<div class="section-title">🔗 Croisement Notes × Présences</div>',unsafe_allow_html=True)
-    pres_cx=get_presences_df()
-    if len(pres_cx)==0:
+    st.markdown('<div class="section-title">🔗 Notes × Présences</div>',unsafe_allow_html=True)
+    if len(pres_df)==0:
         st.info("Aucune présence enregistrée.")
     else:
-        df_ps2=presence_stats(agents)
-        df_cx=df_stats.merge(df_ps2[["Agent","Taux (%)","Présences","Statut"]],on="Agent",how="left")
-        df_cx["Taux (%)"]=df_cx["Taux (%)"].fillna(0)
-        df_cx["Statut présence"]=df_cx["Statut"].fillna("Non pointé")
-        cm={"Assidu":"#27ae60","Moyen":"#f39c12","Faible":"#e74c3c","Non pointé":"#9ca3af"}
-        fig_sc=go.Figure()
+        dcx=df_stats.merge(df_pres_stats[["Agent","Taux présence (%)","Absent non justifié"]],
+                           on="Agent",how="left").fillna(0)
+        dcx["Statut"]=dcx.apply(lambda r: compute_profil(r["Moyenne"],r["Taux présence (%)"],seuil_note)[0], axis=1)
+        cm={"🟢 Performant et assidu":"#27ae60","🟡 Performant mais absent":"#f39c12",
+            "🟠 Présent mais en difficulté":"#f97316","🔴 En difficulté et absent":"#e74c3c"}
+        fsc=go.Figure()
         for sv,color in cm.items():
-            sub=df_cx[df_cx["Statut présence"]==sv]
+            sub=dcx[dcx["Statut"]==sv]
             if len(sub)>0:
-                fig_sc.add_trace(go.Scatter(x=sub["Taux (%)"],y=sub["Moyenne"],
+                fsc.add_trace(go.Scatter(x=sub["Taux présence (%)"],y=sub["Moyenne"],
                     mode="markers+text",name=sv,
-                    marker=dict(size=12,color=color,opacity=0.8,line=dict(color="white",width=1.5)),
-                    text=sub["Agent"].str.split().str[0],textposition="top center",textfont=dict(size=9),
-                    hovertemplate="<b>%{text}</b><br>Présence:%{x}%<br>Moy:%{y:.2f}<extra></extra>"))
-        pts_r=df_cx[df_cx["Taux (%)"]>0]
-        if len(pts_r)>3:
+                    marker=dict(size=12,color=color,opacity=0.85,line=dict(color="white",width=1.5)),
+                    text=sub["Agent"].str.split().str[0],textposition="top center",
+                    textfont=dict(size=9),
+                    hovertemplate="<b>%{text}</b><br>Présence:%{x}% · Note:%{y:.2f}<extra></extra>"))
+        pts=dcx[dcx["Taux présence (%)"]>0]
+        if len(pts)>3:
             try:
-                z=np.polyfit(pts_r["Taux (%)"],pts_r["Moyenne"],1); p=np.poly1d(z)
+                z=np.polyfit(pts["Taux présence (%)"],pts["Moyenne"],1); p=np.poly1d(z)
                 xl=np.linspace(0,100,50)
-                fig_sc.add_trace(go.Scatter(x=xl,y=p(xl),mode="lines",name="Tendance",
+                fsc.add_trace(go.Scatter(x=xl,y=p(xl),mode="lines",name="Tendance",
                     line=dict(color="#4a6cf7",width=2,dash="dash"),hoverinfo="skip"))
-                corr=round(pts_r["Taux (%)"].corr(pts_r["Moyenne"]),3)
-                interp=("forte positive" if corr>0.6 else "modérée" if corr>0.3 else "faible")
-                st.info(f"**Corrélation présence / notes : {corr}** — {interp}")
+                corr=round(pts["Taux présence (%)"].corr(pts["Moyenne"]),3)
+                st.info(f"**Corrélation absences / notes : {corr}**")
             except: pass
-        fig_sc.update_layout(paper_bgcolor="white",plot_bgcolor="white",
+        fsc.update_layout(paper_bgcolor="white",plot_bgcolor="white",
             font=dict(family="DM Sans",color="#2c3e7a"),
             xaxis=dict(title="Taux présence (%)",range=[-5,110],gridcolor="#f0f4ff"),
             yaxis=dict(title="Moyenne /20",range=[0,21],gridcolor="#f0f4ff"),
-            height=460,margin=dict(t=40,b=40,l=50,r=20))
-        st.plotly_chart(fig_sc,use_container_width=True)
+            height=480,margin=dict(t=40,b=40,l=50,r=20),
+            shapes=[dict(type="line",xref="x",x0=75,x1=75,yref="paper",y0=0,y1=1,
+                         line=dict(color="#27ae60",width=1,dash="dot")),
+                    dict(type="line",xref="paper",x0=0,x1=1,yref="y",
+                         y0=seuil_note,y1=seuil_note,
+                         line=dict(color="#e74c3c",width=1,dash="dot"))])
+        st.plotly_chart(fsc,use_container_width=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# COURBES
-# ─────────────────────────────────────────────────────────────────────────────
+# ── COURBES NOTES ────────────────────────────────────────────────────────
 with tab_notes:
-    st.markdown('<div class="section-title">📈 Évolution individuelle</div>',unsafe_allow_html=True)
-    if not selected_agents:
+    st.markdown('<div class="section-title">📈 Évolution des notes (couleur)</div>',unsafe_allow_html=True)
+    st.caption("Les points sont colorés selon le niveau : 🟢 Très Bien · 🔵 Bien · 🟡 Assez Bien · 🔴 Insuffisant")
+    if not sel_agents:
         st.info("👈 Sélectionnez des agents dans le panneau latéral.")
     else:
         pal=(px.colors.qualitative.Pastel+px.colors.qualitative.Safe
              +px.colors.qualitative.Vivid+px.colors.qualitative.Dark24)
         fig=go.Figure()
-        for i,agent in enumerate(selected_agents):
+        for i,agent in enumerate(sel_agents):
             row=df[df[name_col]==agent].iloc[0]
             notes=[float(row[c]) for c in note_cols]; c=pal[i%len(pal)]
+            # Couleur de chaque point selon la note
+            marker_colors=[]
+            for n in notes:
+                if n>=16: marker_colors.append("#27ae60")
+                elif n>=14: marker_colors.append("#1a56db")
+                elif n>=seuil_note: marker_colors.append("#f39c12")
+                else: marker_colors.append("#e74c3c")
             fig.add_trace(go.Scatter(x=note_cols,y=notes,mode="lines+markers+text",name=agent,
-                line=dict(color=c,width=2.5,shape="spline"),
-                marker=dict(size=9,color=c,line=dict(color="white",width=1.5)),
-                text=[str(int(n)) for n in notes],textposition="top center",textfont=dict(size=9,color=c),
+                line=dict(color=c,width=2,shape="spline"),
+                marker=dict(size=11,color=marker_colors,line=dict(color="white",width=1.5)),
+                text=[str(int(n)) for n in notes],textposition="top center",
+                textfont=dict(size=9,color=c),
                 hovertemplate=f"<b>{agent}</b><br>%{{x}} : <b>%{{y}}</b>/20<extra></extra>"))
         fig.update_layout(paper_bgcolor="white",plot_bgcolor="white",
             font=dict(family="DM Sans",color="#2c3e7a"),
@@ -409,91 +1073,41 @@ with tab_notes:
             yaxis=dict(title="Note /20",range=[-0.5,21],gridcolor="#f0f4ff"),
             legend=dict(bgcolor="rgba(255,255,255,.95)",bordercolor="#dce4f5",borderwidth=1),
             hovermode="x unified",height=480,margin=dict(t=30,b=40,l=50,r=80),
-            shapes=[dict(type="line",xref="paper",x0=0,x1=1,yref="y",y0=10,y1=10,
+            shapes=[dict(type="line",xref="paper",x0=0,x1=1,yref="y",
+                         y0=seuil_note,y1=seuil_note,
                          line=dict(color="#e74c3c",width=1.5,dash="dot")),
                     dict(type="line",xref="paper",x0=0,x1=1,yref="y",y0=14,y1=14,
                          line=dict(color="#27ae60",width=1.5,dash="dot"))],
-            annotations=[dict(xref="paper",x=1.01,yref="y",y=10,text="Seuil 10",
-                               showarrow=False,font=dict(size=9,color="#e74c3c"),xanchor="left"),
+            annotations=[dict(xref="paper",x=1.01,yref="y",y=seuil_note,
+                               text=f"Seuil {int(seuil_note)}",showarrow=False,
+                               font=dict(size=9,color="#e74c3c"),xanchor="left"),
                          dict(xref="paper",x=1.01,yref="y",y=14,text="Seuil 14",
                                showarrow=False,font=dict(size=9,color="#27ae60"),xanchor="left")])
         st.plotly_chart(fig,use_container_width=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TENDANCE
-# ─────────────────────────────────────────────────────────────────────────────
-with tab_tendance:
-    st.markdown('<div class="section-title">🌐 Tendance globale</div>',unsafe_allow_html=True)
-    df_fl=df[note_cols].astype(float)
-    moy_e=df_fl.mean().values; med_e=df_fl.median().values
-    max_e=df_fl.max().values; min_e=df_fl.min().values; std_e=df_fl.std().values
-    fig2=go.Figure()
-    fig2.add_trace(go.Scatter(x=list(note_cols)+list(reversed(note_cols)),
-        y=list(max_e)+list(reversed(min_e)),fill="toself",fillcolor="rgba(74,108,247,0.07)",
-        line=dict(color="rgba(0,0,0,0)"),hoverinfo="skip",name="Zone Min–Max"))
-    fig2.add_trace(go.Scatter(x=note_cols,y=med_e,mode="lines+markers",name="Médiane",
-        line=dict(color="#7b5ea7",width=2,dash="dash",shape="spline"),marker=dict(size=7,color="#7b5ea7")))
-    fig2.add_trace(go.Scatter(x=note_cols,y=moy_e,mode="lines+markers+text",name="Moyenne",
-        line=dict(color="#4a6cf7",width=3,shape="spline"),
-        marker=dict(size=10,color="#4a6cf7",line=dict(color="white",width=2)),
-        text=[f"{v:.1f}" for v in moy_e],textposition="top center",textfont=dict(size=10,color="#2c3e7a")))
-    fig2.update_layout(paper_bgcolor="white",plot_bgcolor="white",
-        font=dict(family="DM Sans",color="#2c3e7a"),
-        xaxis=dict(title="Évaluation",gridcolor="#f0f4ff"),
-        yaxis=dict(title="Note /20",range=[-0.5,21],gridcolor="#f0f4ff"),
-        hovermode="x unified",height=420,margin=dict(t=30,b=40,l=50,r=20))
-    st.plotly_chart(fig2,use_container_width=True)
-    st.dataframe(pd.DataFrame({"Évaluation":note_cols,"Moyenne":[round(v,2) for v in moy_e],
-        "Médiane":[round(v,2) for v in med_e],"Max":[int(v) for v in max_e],
-        "Min":[int(v) for v in min_e],"Écart-type":[round(v,2) for v in std_e]}),
-        use_container_width=True,hide_index=True)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# STATS
-# ─────────────────────────────────────────────────────────────────────────────
-with tab_stats:
-    st.markdown('<div class="section-title">📋 Stats détaillées par agent</div>',unsafe_allow_html=True)
-    df_f=df_stats[(df_stats["Moyenne"]>=note_range[0])&(df_stats["Moyenne"]<=note_range[1])]\
-         .sort_values("Moyenne",ascending=False).reset_index(drop=True)
-    df_f.index+=1
-    st.dataframe(df_f.style.apply(style_note_row,axis=1).format(
-        {"Moyenne":"{:.2f}","Médiane":"{:.2f}","Écart-type":"{:.2f}","Max":"{:.0f}","Min":"{:.0f}"}),
-        use_container_width=True,height=500)
-    buf_s=io.BytesIO()
-    with pd.ExcelWriter(buf_s,engine="openpyxl") as w:
-        df.to_excel(w,sheet_name="Notes brutes",index=False)
-        df_stats.to_excel(w,sheet_name="Statistiques",index=False)
-    st.download_button("⬇️ Exporter stats (Excel)",buf_s.getvalue(),
-        file_name="stats_notes.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HEATMAP
-# ─────────────────────────────────────────────────────────────────────────────
+# ── HEATMAP ──────────────────────────────────────────────────────────────
 with tab_heatmap:
     st.markdown('<div class="section-title">🔥 Carte de chaleur</div>',unsafe_allow_html=True)
     heat=df.set_index(name_col)[note_cols].astype(float)
-    fig5=go.Figure(go.Heatmap(z=heat.values,x=note_cols,y=heat.index.tolist(),
+    f5=go.Figure(go.Heatmap(z=heat.values,x=note_cols,y=heat.index.tolist(),
         colorscale=[[0,"#fee2e2"],[0.001,"#fecaca"],[0.3,"#bfdbfe"],[0.6,"#4a6cf7"],[1,"#1a237e"]],
         text=heat.values.astype(int),texttemplate="%{text}",textfont=dict(size=10),
         hovertemplate="<b>%{y}</b><br>%{x} : <b>%{z}</b>/20<extra></extra>",
         colorbar=dict(title="Note"),zmin=0,zmax=20))
-    fig5.update_layout(paper_bgcolor="white",plot_bgcolor="white",
+    f5.update_layout(paper_bgcolor="white",plot_bgcolor="white",
         font=dict(family="DM Sans",color="#2c3e7a"),
         xaxis=dict(side="top"),yaxis=dict(autorange="reversed"),
         height=max(400,len(agents)*28),margin=dict(t=50,b=20,l=240,r=20))
-    st.plotly_chart(fig5,use_container_width=True)
+    st.plotly_chart(f5,use_container_width=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CLASSEMENT
-# ─────────────────────────────────────────────────────────────────────────────
+# ── CLASSEMENT ───────────────────────────────────────────────────────────
 with tab_podium:
-    st.markdown('<div class="section-title">🏆 Classement général</div>',unsafe_allow_html=True)
-    df_rk=df_stats.sort_values("Moyenne",ascending=False).reset_index(drop=True); df_rk.index+=1
-    if len(df_rk)>=3:
+    st.markdown('<div class="section-title">🏆 Classement</div>',unsafe_allow_html=True)
+    drk=df_stats.sort_values("Moyenne",ascending=False).reset_index(drop=True); drk.index+=1
+    if len(drk)>=3:
         p2,p1,p3=st.columns([1,1.2,1])
         for col,rank,medal,bg in [(p1,1,"🥇","#FFF9C4"),(p2,2,"🥈","#F5F5F5"),(p3,3,"🥉","#FBE9E7")]:
-            r=df_rk.iloc[rank-1]; ml,mc=mention_info(r["Moyenne"])
+            r=drk.iloc[rank-1]; ml,mc=mention_info(r["Moyenne"],seuil_note)
             col.markdown(f'<div style="background:{bg};border-radius:16px;padding:16px;'
                          f'text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.07);">'
                          f'<div style="font-size:2rem;">{medal}</div>'
@@ -501,238 +1115,343 @@ with tab_podium:
                          f'<div style="font-size:1.8rem;font-weight:700;color:#4a6cf7;">{r["Moyenne"]:.2f}</div>'
                          f'<span class="{mc}">{ml}</span></div>',unsafe_allow_html=True)
     st.markdown("<br>",unsafe_allow_html=True)
-    cb=["#2d6a4f" if m>=16 else "#1a56db" if m>=14 else "#92400e" if m>=10 else "#b91c1c"
-        for m in df_rk["Moyenne"]]
-    fig_b=go.Figure(go.Bar(x=df_rk["Moyenne"],y=df_rk["Agent"],orientation="h",
-        marker=dict(color=cb,line=dict(color="white",width=0.5)),
-        text=[f"{v:.2f}" for v in df_rk["Moyenne"]],textposition="outside"))
-    fig_b.update_layout(paper_bgcolor="white",plot_bgcolor="white",
+    cb_=["#2d6a4f" if m>=16 else "#1a56db" if m>=14 else "#92400e" if m>=seuil_note else "#b91c1c"
+         for m in drk["Moyenne"]]
+    fb=go.Figure(go.Bar(x=drk["Moyenne"],y=drk["Agent"],orientation="h",
+        marker=dict(color=cb_,line=dict(color="white",width=0.5)),
+        text=[f"{v:.2f}" for v in drk["Moyenne"]],textposition="outside"))
+    fb.update_layout(paper_bgcolor="white",plot_bgcolor="white",
         font=dict(family="DM Sans",color="#2c3e7a"),
-        xaxis=dict(range=[0,23],gridcolor="#f0f4ff"),yaxis=dict(autorange="reversed",tickfont=dict(size=10)),
+        xaxis=dict(range=[0,23],gridcolor="#f0f4ff"),
+        yaxis=dict(autorange="reversed",tickfont=dict(size=10)),
         height=max(400,len(agents)*28),margin=dict(t=20,b=40,l=230,r=60),showlegend=False)
-    st.plotly_chart(fig_b,use_container_width=True)
+    st.plotly_chart(fb,use_container_width=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ADMIN — tout en un
-# ─────────────────────────────────────────────────────────────────────────────
+# ── EXPORTS ──────────────────────────────────────────────────────────────
+with tab_export:
+    st.markdown('<div class="section-title">📤 Exports</div>',unsafe_allow_html=True)
+    e1,e2=st.columns(2)
+    with e1:
+        st.markdown("#### 🎨 Export Couleur + Flèches")
+        st.markdown("Notes remplacées par couleurs et flèches ▲→▼")
+        if st.button("⬇️ Générer",key="btn_c",type="primary",use_container_width=True):
+            data=export_couleur_excel(df,note_cols,name_col,df_stats,seuil_note)
+            st.download_button("💾 Télécharger — Notes couleur",data=data,
+                file_name=f"notes_couleur_{datetime.date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True)
+    with e2:
+        st.markdown("#### 📊 Export Stats + Présences + Profils")
+        st.markdown("4 feuilles : notes · présences · profils · synthèse")
+        if st.button("⬇️ Générer",key="btn_s",type="primary",use_container_width=True):
+            data=export_stats_excel(df,note_cols,name_col,df_stats,df_pres_stats)
+            st.download_button("💾 Télécharger — Stats complètes",data=data,
+                file_name=f"stats_formation_{datetime.date.today()}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.spec",
+                use_container_width=True)
+    st.markdown("---")
+    st.markdown("#### 📄 Rapport PDF — Direction")
+    if st.button("⬇️ Générer PDF",type="primary",use_container_width=True):
+        if PDF_OK:
+            data=export_pdf_direction(df_stats,df_pres_stats,note_cols,agents)
+            if data:
+                st.download_button("💾 Télécharger — Rapport direction PDF",data=data,
+                    file_name=f"rapport_direction_{datetime.date.today()}.pdf",
+                    mime="application/pdf",use_container_width=True)
+        else:
+            st.error("❌ Module fpdf2 manquant dans requirements.txt")
+
+# ── KIOSQUE SCANNER ───────────────────────────────────────────────────────
+with tab_kiosque:
+    st.markdown('<div class="section-title">📷 Mode Kiosque — Tablette Android</div>',
+                unsafe_allow_html=True)
+    st.markdown(f"**Session :** `{st.session_state.session_active}`")
+
+    # Wake Lock JS — empêche la tablette de se mettre en veille
+    st.components.v1.html("""
+    <script>
+    let wakeLock = null;
+    async function requestWakeLock() {
+        try {
+            if ('wakeLock' in navigator) {
+                wakeLock = await navigator.wakeLock.request('screen');
+                console.log('Wake Lock activé');
+            }
+        } catch(e) { console.log('Wake Lock non supporté:', e); }
+    }
+    requestWakeLock();
+    document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState === 'visible') { requestWakeLock(); }
+    });
+    </script>
+    <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;
+                padding:8px 14px;font-size:13px;color:#166534;text-align:center;">
+        📱 Écran maintenu actif (Wake Lock activé)
+    </div>
+    """, height=50)
+
+    ck1,ck2=st.columns([1.3,1])
+    with ck1:
+        if not st.session_state.camera_on:
+            if st.button("📷 Ouvrir la caméra — Démarrer le pointage",
+                         type="primary",use_container_width=True):
+                st.session_state.camera_on=True
+                st.session_state.last_agent=None; st.rerun()
+        else:
+            if st.button("🔴 Fermer la caméra",type="secondary",use_container_width=True):
+                st.session_state.camera_on=False; st.rerun()
+
+            # Affichage heure en temps réel
+            now_str = datetime.datetime.now().strftime("%H:%M:%S")
+            st.markdown(f"""
+            <div style="background:#1a1a2e;border-radius:12px;padding:16px;
+                        text-align:center;margin:8px 0;">
+                <div style="font-size:2.5rem;font-weight:700;color:#4a6cf7;
+                            font-family:monospace;">{now_str}</div>
+                <div style="font-size:.9rem;color:#6b7db3;margin-top:4px;">
+                    Retard matin après 08:00 · Retard après-midi après 14:45
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+            if st.session_state.last_agent:
+                st.markdown(f'<div class="scan-ok" style="font-size:1.1rem;">'
+                            f'✅ <b>{st.session_state.last_agent}</b><br>'
+                            f'<small>Pointé à {st.session_state.last_time} · '
+                            f'Prêt pour le prochain…</small></div>',unsafe_allow_html=True)
+                # Son de confirmation via JS
+                st.components.v1.html("""
+                <script>
+                const ctx = new AudioContext();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain); gain.connect(ctx.destination);
+                osc.frequency.value = 880; gain.gain.value = 0.3;
+                osc.start(); osc.stop(ctx.currentTime + 0.15);
+                </script>""", height=0)
+
+            if QR_OK:
+                st.caption("📸 Présentez le badge QR — détection automatique")
+                qr_val=qrcode_scanner(key="kiosque_scanner")
+                if qr_val:
+                    af=key_to_agent(str(qr_val).strip())
+                    if af in agents:
+                        deja,h=is_pointed(af,st.session_state.session_active)
+                        if not deja:
+                            add_presence(af,st.session_state.session_active)
+                            st.session_state.last_agent=af
+                            st.session_state.last_time=datetime.datetime.now().strftime("%H:%M:%S")
+                            st.rerun()
+                        else:
+                            st.warning(f"ℹ️ **{af}** déjà pointé à {h}")
+                    else:
+                        st.error(f"❌ QR non reconnu : `{af}`")
+            else:
+                st.error("❌ Module `streamlit-qrcode-scanner` manquant dans requirements.txt")
+
+    with ck2:
+        st.markdown("**Pointage manuel rapide**")
+        with st.form("fm_kiosque"):
+            ag=st.selectbox("Agent",agents)
+            st_=st.selectbox("Statut",["Présent","En retard","Excusé"])
+            if st.form_submit_button("✅ Pointer",use_container_width=True):
+                deja,h=is_pointed(ag,st.session_state.session_active)
+                if not deja:
+                    add_presence(ag,st.session_state.session_active,st_)
+                    st.success(f"✅ {ag}"); st.rerun()
+                else: st.info(f"Déjà pointé à {h}")
+
+        # Journal du jour
+        st.markdown("**Journal du jour :**")
+        today=datetime.date.today()
+        pj=pres_df[pres_df["date_jour"]==today] if len(pres_df)>0 else pd.DataFrame()
+        pj_sess=pj[pj["session"]==st.session_state.session_active] if len(pj)>0 else pd.DataFrame()
+        if len(pj_sess)>0:
+            st.dataframe(pj_sess[["agent","heure","statut"]].sort_values("heure",ascending=False),
+                         use_container_width=True,hide_index=True,height=300)
+        else:
+            st.info("Aucun pointage aujourd'hui.")
+
+# ── ADMIN ────────────────────────────────────────────────────────────────
 with tab_admin:
-    st.markdown('<div class="section-title">🔐 Espace Administrateur</div>',unsafe_allow_html=True)
-
-    if not st.session_state.admin_logged_in:
-        pwd=st.text_input("Mot de passe",type="password",placeholder="Entrez le mot de passe admin")
+    st.markdown('<div class="section-title">🔐 Administration</div>',unsafe_allow_html=True)
+    if not st.session_state.admin_ok:
+        pwd=st.text_input("Mot de passe",type="password")
         if st.button("🔓 Se connecter",type="primary",use_container_width=True):
             if pwd==get_admin_pwd():
-                st.session_state.admin_logged_in=True; st.rerun()
+                st.session_state.admin_ok=True; st.rerun()
             else: st.error("❌ Mot de passe incorrect")
-        st.caption("Mot de passe par défaut : `sans_dohi` (modifiable par Admin)")
+        st.caption("Par défaut : `formation2026`")
     else:
-        cola,colb=st.columns([2,1])
-        with cola: st.success("✅ Connecté en tant qu'administrateur")
-        with colb:
+        ca,cb_=st.columns([2,1])
+        with ca: st.success(f"✅ Admin · {'🟢 Supabase' if DB else '⚠️ Mémoire'}")
+        with cb_:
             if st.button("🚪 Déconnexion",use_container_width=True):
-                st.session_state.admin_logged_in=False; st.rerun()
+                st.session_state.admin_ok=False; st.rerun()
 
-        st.markdown("---")
+        a1,a2,a3,a4,a5=st.tabs(["📊 Notes","🎫 QR Codes","🗓️ Calendrier","⚙️ Seuils","📋 Données"])
 
-        # ── Sous-onglets admin ────────────────────────────────────────────
-        a1,a2,a3,a4,a5 = st.tabs([
-            "📊 Import notes",
-            "📷 Pointage QR",
-            "🎫 Générer QR",
-            "🗓️ Sessions",
-            "📋 Pointages",
-        ])
-
-        # ── A1 : Import notes ─────────────────────────────────────────────
+        # ── Notes ─────────────────────────────────────────────────────────
         with a1:
-            st.markdown('<div class="section-title">Importer les notes (visible par tous immédiatement)</div>',
-                        unsafe_allow_html=True)
+            st.markdown('<div class="section-title">Importer les notes</div>',unsafe_allow_html=True)
             src=st.radio("Source",["📁 Fichier Excel","🔗 Google Sheets"],horizontal=True)
             if "Excel" in src:
-                fn=st.file_uploader("Fichier Excel des notes",type=["xlsx","xls"],key="adm_notes")
+                fn=st.file_uploader("Fichier Excel",type=["xlsx","xls"])
                 if fn and st.button("✅ Publier pour tous",type="primary",use_container_width=True):
                     try:
                         df_new=pd.read_excel(fn); df_new.columns=df_new.columns.astype(str).str.strip()
-                        shared["notes"]=df_new.to_dict("records")
-                        shared["notes_label"]=f"Excel importé — {df_new.shape[0]} agents"
-                        st.success(f"✅ {df_new.shape[0]} agents publiés pour tous les utilisateurs !"); st.rerun()
+                        save_notes(df_new,f"Excel — {df_new.shape[0]} agents")
+                        st.success(f"✅ {df_new.shape[0]} agents publiés !"); st.rerun()
                     except Exception as e: st.error(str(e))
             else:
-                url_gs=st.text_input("URL Google Sheets",placeholder="https://docs.google.com/spreadsheets/d/...")
-                if st.button("✅ Publier pour tous",type="primary",use_container_width=True):
+                url_gs=st.text_input("URL Google Sheets")
+                if st.button("✅ Publier",type="primary",use_container_width=True):
                     if url_gs:
                         df_new,err=load_gsheet(url_gs)
                         if err: st.error(err)
                         else:
-                            shared["notes"]=df_new.to_dict("records")
-                            shared["notes_label"]=f"Google Sheets — {df_new.shape[0]} agents"
-                            st.success(f"✅ {df_new.shape[0]} agents depuis Google Sheets !"); st.rerun()
-            if shared["notes"] is not None:
-                st.markdown("---")
-                if st.button("🔄 Revenir aux données par défaut"):
-                    shared["notes"]=None; shared["notes_label"]="Données par défaut"; st.rerun()
+                            save_notes(df_new,f"Google Sheets — {df_new.shape[0]} agents")
+                            st.success(f"✅ {df_new.shape[0]} agents !"); st.rerun()
+            if st.button("🔄 Données par défaut",type="secondary"):
+                if DB:
+                    try:
+                        sb.table("app_config").delete().in_("cle",["notes","notes_label"]).execute()
+                        db_get.clear()
+                    except: pass
+                else: M["notes"]=None
+                st.success("Rétabli."); st.rerun()
 
-        # ── A2 : Pointage QR ──────────────────────────────────────────────
+        # ── QR Codes ──────────────────────────────────────────────────────
         with a2:
-            st.markdown('<div class="section-title">📷 Scan QR Code — Pointage</div>',unsafe_allow_html=True)
-            st.markdown(f"**Session active :** `{st.session_state.session_active}`")
-
-            c_scan,c_manual=st.columns([1.2,1])
-            with c_scan:
-                if not st.session_state.camera_on:
-                    if st.button("📷 Ouvrir la caméra",type="primary",use_container_width=True):
-                        st.session_state.camera_on=True
-                        st.session_state.last_scan_agent=None
-                        st.rerun()
-                else:
-                    if st.button("🔴 Fermer la caméra",type="secondary",use_container_width=True):
-                        st.session_state.camera_on=False; st.rerun()
-                    if st.session_state.last_scan_agent:
-                        st.markdown(f'<div class="scan-ok">✅ <b>{st.session_state.last_scan_agent}</b>'
-                                    f' pointé à {st.session_state.last_scan_time}<br>'
-                                    f'<small>Prêt pour le prochain agent…</small></div>',
-                                    unsafe_allow_html=True)
-                    if QR_OK:
-                        st.caption("📸 Présentez le badge QR devant la caméra — détection automatique")
-                        qr_val=qrcode_scanner(key="admin_qr_scanner")
-                        if qr_val:
-                            agent_found=key_to_agent(str(qr_val))
-                            if agent_found in agents:
-                                deja,heure=is_already_pointed(agent_found,st.session_state.session_active)
-                                if not deja:
-                                    add_presence_shared(agent_found,st.session_state.session_active)
-                                    st.session_state.last_scan_agent=agent_found
-                                    st.session_state.last_scan_time=datetime.datetime.now().strftime("%H:%M:%S")
-                                    st.rerun()
-                                else:
-                                    st.warning(f"ℹ️ **{agent_found}** déjà pointé à {heure}")
-                            else:
-                                st.error(f"❌ Agent non reconnu : `{agent_found}`\n\n"
-                                         f"Vérifiez que ce QR a été généré depuis cet onglet **🎫 Générer QR**.")
-                    else:
-                        st.error("❌ Module `streamlit-qrcode-scanner` non installé. "
-                                 "Vérifiez requirements.txt.")
-
-            with c_manual:
-                st.markdown("**Pointage manuel**")
-                with st.form("form_manual_admin"):
-                    ag=st.selectbox("Agent",agents)
-                    stat=st.selectbox("Statut",["Présent","En retard","Excusé"])
-                    ok=st.form_submit_button("✅ Enregistrer",use_container_width=True)
-                    if ok:
-                        deja,heure=is_already_pointed(ag,st.session_state.session_active)
-                        if not deja:
-                            add_presence_shared(ag,st.session_state.session_active,stat)
-                            st.success(f"✅ **{ag}** — {stat}"); st.rerun()
-                        else: st.info(f"ℹ️ Déjà pointé à {heure}")
-
-            # Journal du jour
-            st.markdown('<div class="section-title">Journal du jour</div>',unsafe_allow_html=True)
-            today=datetime.date.today().strftime("%d/%m/%Y")
-            pres_j=get_presences_df()
-            jour_df=pres_j[(pres_j["Session"]==st.session_state.session_active)&
-                           (pres_j["Date"]==today)].sort_values("Heure",ascending=False).reset_index(drop=True)
-            if len(jour_df)>0:
-                st.dataframe(jour_df,use_container_width=True,hide_index=True,height=280)
-                bj=io.BytesIO(); jour_df.to_csv(bj,index=False,encoding="utf-8-sig")
-                st.download_button("⬇️ Exporter journal",bj.getvalue(),
-                    file_name=f"journal_{today.replace('/','_')}.csv",mime="text/csv")
-            else: st.info("Aucun pointage aujourd'hui pour cette session.")
-
-        # ── A3 : Générer QR ───────────────────────────────────────────────
-        with a3:
-            st.markdown('<div class="section-title">🎫 Générer les badges QR</div>',unsafe_allow_html=True)
-            st.caption(f"{len(agents)} agents · 1 QR code unique par agent · Téléchargement ZIP")
-            ags=st.multiselect("Agents (vide = tous)",options=agents,placeholder="Tous les agents")
-            qsz=st.selectbox("Taille",["Petite","Normale","Grande"],index=1)
-            qbox={"Petite":4,"Normale":6,"Grande":8}[qsz]
-            agen_g=ags if ags else agents
-            if st.button(f"🔄 Générer {len(agen_g)} QR Code(s)",type="primary",use_container_width=True):
-                zb=io.BytesIO(); prev=[]
-                with zipfile.ZipFile(zb,"w",zipfile.ZIP_DEFLATED) as zf:
-                    prg=st.progress(0,text="Génération…")
-                    for i,agent in enumerate(agen_g):
-                        qo=qrcode.QRCode(version=1,error_correction=qrcode.constants.ERROR_CORRECT_H,
-                                          box_size=qbox,border=3)
-                        qo.add_data(agent_to_qr_key(agent)); qo.make(fit=True)
-                        img=qo.make_image(fill_color="#2c3e7a",back_color="white")
-                        bf=io.BytesIO(); img.save(bf,format="PNG"); bf.seek(0); raw=bf.getvalue()
-                        zf.writestr(f"QR_Badges/{agent[:60].replace('/','_')}.png",raw)
-                        prev.append({"name":agent,"b64":base64.b64encode(raw).decode()})
-                        prg.progress((i+1)/len(agen_g),text=f"{i+1}/{len(agen_g)} — {agent[:28]}…")
-                    prg.empty()
-                zb.seek(0)
-                st.success(f"✅ {len(agen_g)} QR codes générés !")
-                st.download_button(f"⬇️ Télécharger ZIP ({len(agen_g)} badges)",
-                    data=zb.getvalue(),file_name="QR_Badges_Formation.zip",
-                    mime="application/zip",use_container_width=True)
+            st.markdown('<div class="section-title">QR Codes — générés une fois</div>',
+                        unsafe_allow_html=True)
+            existing_qr=get_qr_codes()
+            if len(existing_qr)>0:
+                st.success(f"✅ {len(existing_qr)} QR codes en base — permanents.")
+                if st.button("🔄 Régénérer (si agents ont changé)",type="secondary",use_container_width=True):
+                    qr_map=generate_and_store_qr(agents); st.rerun()
+            else:
+                st.warning("⚠️ Aucun QR code. Générez-les une fois.")
+                if st.button(f"🔄 Générer {len(agents)} QR codes",type="primary",use_container_width=True):
+                    qr_map=generate_and_store_qr(agents); st.rerun()
+            qr_map=get_qr_codes()
+            if qr_map:
+                ags_dl=st.multiselect("Agents à télécharger (vide=tous)",list(qr_map.keys()))
+                to_dl=ags_dl if ags_dl else list(qr_map.keys())
+                if st.button(f"⬇️ ZIP ({len(to_dl)} badges)",use_container_width=True):
+                    zb=io.BytesIO()
+                    with zipfile.ZipFile(zb,"w",zipfile.ZIP_DEFLATED) as zf:
+                        for ag,b64 in qr_map.items():
+                            if ag in to_dl:
+                                zf.writestr(f"QR_Badges/{ag[:60].replace('/','_')}.png",
+                                            base64.b64decode(b64))
+                    zb.seek(0)
+                    st.download_button("💾 Télécharger",data=zb.getvalue(),
+                        file_name="QR_Badges.zip",mime="application/zip",use_container_width=True)
                 hg='<div class="qr-grid">'
-                for p in prev:
-                    hg+=(f'<div class="qr-item"><img src="data:image/png;base64,{p["b64"]}" '
+                for ag,b64 in list(qr_map.items())[:12]:
+                    hg+=(f'<div class="qr-item"><img src="data:image/png;base64,{b64}" '
                          f'style="width:100%;border-radius:5px">'
-                         f'<div class="qr-name">{p["name"][:35]}</div></div>')
+                         f'<div class="qr-name">{ag[:30]}</div></div>')
                 st.markdown(hg+'</div>',unsafe_allow_html=True)
 
-        # ── A4 : Sessions ─────────────────────────────────────────────────
+        # ── Calendrier ────────────────────────────────────────────────────
+        with a3:
+            st.markdown('<div class="section-title">🗓️ Calendrier — Associer dates et notes</div>',
+                        unsafe_allow_html=True)
+            st.caption("Indiquez pour chaque jour si une note a été donnée et laquelle.")
+            date_debut=st.date_input("Date de début de formation",value=datetime.date.today())
+            nb_jours=st.number_input("Nombre de jours de formation",min_value=1,max_value=90,value=21)
+            if st.button("🗓️ Générer le calendrier",type="primary",use_container_width=True):
+                rows=[]
+                note_idx=0
+                for j in range(nb_jours):
+                    d=date_debut+datetime.timedelta(days=j)
+                    if d.weekday()<5:  # Lundi-Vendredi uniquement
+                        rows.append({"date_jour":str(d),"a_une_note":False,
+                                     "nom_note":None,"ordre_note":None})
+                if DB: db_save_calendrier(rows)
+                else: M["calendrier"]=[{**r,"date_jour":datetime.date.fromisoformat(r["date_jour"])} for r in rows]
+                st.success(f"✅ {len(rows)} jours ouvrés générés."); st.rerun()
+
+            cal=get_calendrier()
+            if len(cal)>0:
+                st.markdown("**Associez chaque jour à une note :**")
+                cal_edit=cal.copy()
+                for i,row in cal.iterrows():
+                    c1,c2,c3=st.columns([2,1,2])
+                    with c1: st.write(str(row["date_jour"]))
+                    with c2:
+                        has_note=st.checkbox("Note ?",value=bool(row["a_une_note"]),
+                                              key=f"cal_n_{i}")
+                    with c3:
+                        if has_note:
+                            note_name=st.selectbox("Quelle note ?",["—"]+note_cols,
+                                key=f"cal_sel_{i}",
+                                index=note_cols.index(row["nom_note"])+1 if row["nom_note"] in note_cols else 0)
+                            cal_edit.at[i,"a_une_note"]=True
+                            cal_edit.at[i,"nom_note"]=note_name if note_name!="—" else None
+                        else:
+                            cal_edit.at[i,"a_une_note"]=False
+                            cal_edit.at[i,"nom_note"]=None
+                if st.button("💾 Sauvegarder le calendrier",type="primary",use_container_width=True):
+                    rows_save=[]
+                    for i,row in cal_edit.iterrows():
+                        rows_save.append({"date_jour":str(row["date_jour"]),
+                            "a_une_note":bool(row["a_une_note"]),
+                            "nom_note":row["nom_note"],
+                            "ordre_note":int(i)})
+                    if DB: db_save_calendrier(rows_save)
+                    else: M["calendrier"]=cal_edit.to_dict("records")
+                    st.success("✅ Calendrier sauvegardé !"); st.rerun()
+
+        # ── Seuils ────────────────────────────────────────────────────────
         with a4:
-            st.markdown('<div class="section-title">🗓️ Configurer les sessions</div>',unsafe_allow_html=True)
-            st.caption("Modifiez la liste des sessions de formation. Visible de tous.")
-            txt=st.text_area("Sessions (1 par ligne)",
-                value="\n".join(shared["sessions_config"]),height=180)
-            if st.button("💾 Sauvegarder",type="primary",use_container_width=True):
+            st.markdown('<div class="section-title">⚙️ Seuils et horaires</div>',unsafe_allow_html=True)
+            s1,s2,s3=st.columns(3)
+            with s1:
+                new_seuil=st.number_input("Seuil note insuffisante",
+                    min_value=1,max_value=20,value=int(seuil_note))
+            with s2:
+                new_h_matin=st.text_input("Heure retard matin","08:00")
+            with s3:
+                new_h_apmidi=st.text_input("Heure retard après-midi","14:45")
+            if st.button("💾 Sauvegarder les seuils",type="primary",use_container_width=True):
+                if DB:
+                    db_set_seuil("seuil_note_insuffisante",str(new_seuil))
+                    db_set_seuil("heure_retard_matin",f'"{new_h_matin}"')
+                    db_set_seuil("heure_retard_apres_midi",f'"{new_h_apmidi}"')
+                st.success("✅ Seuils sauvegardés."); st.rerun()
+
+            # Sessions
+            st.markdown("---")
+            st.markdown('<div class="section-title">Sessions de formation</div>',unsafe_allow_html=True)
+            txt=st.text_area("Sessions (1 par ligne)",value="\n".join(get_sessions()),height=160)
+            if st.button("💾 Sauvegarder les sessions",use_container_width=True):
                 ns=[s.strip() for s in txt.split("\n") if s.strip()]
-                if ns: shared["sessions_config"]=ns; st.success(f"✅ {len(ns)} sessions configurées."); st.rerun()
-                else: st.error("Liste vide.")
+                if ns: save_sessions(ns); st.success(f"✅ {len(ns)} sessions."); st.rerun()
 
-        # ── A5 : Pointages ────────────────────────────────────────────────
+        # ── Données brutes ────────────────────────────────────────────────
         with a5:
-            st.markdown('<div class="section-title">📋 Gestion des pointages</div>',unsafe_allow_html=True)
-            pres_all=get_presences_df()
-            if len(pres_all)>0:
-                st.dataframe(pres_all,use_container_width=True,height=260)
-                ca,cb,cc=st.columns(3)
-                with ca:
-                    bc=io.BytesIO(); pres_all.to_csv(bc,index=False,encoding="utf-8-sig")
-                    st.download_button("⬇️ Export CSV",bc.getvalue(),file_name="pointages.csv",
-                        mime="text/csv",use_container_width=True)
-                with cb:
-                    bx=io.BytesIO()
-                    with pd.ExcelWriter(bx,engine="openpyxl") as w:
-                        pres_all.to_excel(w,sheet_name="Pointages",index=False)
-                    st.download_button("⬇️ Export Excel",bx.getvalue(),file_name="pointages.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        use_container_width=True)
-                with cc:
-                    if st.button("🗑️ Tout effacer",type="secondary",use_container_width=True):
-                        shared["presences"].clear(); st.success("Effacé."); st.rerun()
-            else: st.info("Aucun pointage enregistré.")
-            st.markdown("**Importer un CSV de pointages (fusion)**")
-            fi=st.file_uploader("CSV",type=["csv"],key="adm_pres")
-            if fi and st.button("✅ Fusionner",use_container_width=True):
-                try:
-                    dfi=pd.read_csv(fi)
-                    if {"Agent","Date","Heure","Session","Statut"}.issubset(set(dfi.columns)):
-                        exist={(p["Agent"],p["Date"],p["Session"]) for p in shared["presences"]}
-                        added=0
-                        for _,row in dfi.iterrows():
-                            k=(row["Agent"],row["Date"],row["Session"])
-                            if k not in exist:
-                                shared["presences"].append(row.to_dict()); exist.add(k); added+=1
-                        st.success(f"✅ {added} pointages ajoutés."); st.rerun()
-                    else: st.error("Colonnes manquantes.")
-                except Exception as e: st.error(str(e))
+            st.markdown('<div class="section-title">📋 Données brutes</div>',unsafe_allow_html=True)
+            t_p,t_j=st.tabs(["Pointages","Justifications"])
+            with t_p:
+                pa_=get_presences()
+                if len(pa_)>0:
+                    st.dataframe(pa_,use_container_width=True,height=260)
+                    bc=io.BytesIO(); pa_.to_csv(bc,index=False,encoding="utf-8-sig")
+                    st.download_button("⬇️ CSV pointages",bc.getvalue(),
+                        file_name="pointages.csv",mime="text/csv")
+                    if st.button("🗑️ Effacer tous les pointages",type="secondary"):
+                        if DB: sb.table("presences").delete().neq("id",0).execute(); db_get_presences.clear()
+                        else: M["presences"].clear()
+                        st.success("Effacé."); st.rerun()
+                else: st.info("Aucun pointage.")
+            with t_j:
+                jdf=get_justifications()
+                if len(jdf)>0:
+                    st.dataframe(jdf,use_container_width=True,height=260)
+                else: st.info("Aucune justification.")
 
-# ── EXPORT GLOBAL ──────────────────────────────────────────────────────────
 st.markdown("---")
-buf_fin=io.BytesIO()
-with pd.ExcelWriter(buf_fin,engine="openpyxl") as w:
-    df.to_excel(w,sheet_name="Notes",index=False)
-    df_stats.to_excel(w,sheet_name="Stats notes",index=False)
-    pf=get_presences_df()
-    if len(pf)>0:
-        pf.to_excel(w,sheet_name="Pointages",index=False)
-        presence_stats(agents).to_excel(w,sheet_name="Stats présences",index=False)
-st.download_button("⬇️ Export complet (Excel — toutes feuilles)",buf_fin.getvalue(),
-    file_name="formation_complet.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-st.caption("Plateforme Formation · v6.0 · Données partagées en temps réel · Admin intégré")
+st.caption(f"Plateforme Formation · v9.0 · {'🟢 Supabase' if DB else '⚠️ Mémoire'} · "
+           f"Seuil note : {int(seuil_note)}/20 · QR persistants · Wake Lock Android")

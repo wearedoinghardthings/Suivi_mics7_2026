@@ -845,10 +845,10 @@ if VUE_PUBLIC:
 
         l1,l2,l3,l4 = st.columns(4)
         for col,emoji,lbl,bg in [
-            (l1,"🟢","Très Bien (≥16)","#e6f4ea"),
+            (l1,"🟢",f"Très Bien (≥16)","#e6f4ea"),
             (l2,"🔵","Bien (14-15)","#dbeafe"),
-            (l3,"🟡",f"Assez Bien","#fef3c7"),
-            (l4,"🔴","Insuffisant","#fee2e2"),
+            (l3,"🟡",f"Assez Bien ({int(seuil_note)}-13)","#fef3c7"),
+            (l4,"🔴",f"Insuffisant (<{int(seuil_note)})","#fee2e2"),
         ]:
             col.markdown(f'<div style="background:{bg};border-radius:8px;padding:10px;'
                          f'text-align:center;font-size:.85rem;font-weight:500;">{emoji} {lbl}</div>',
@@ -925,8 +925,8 @@ if VUE_PUBLIC:
             st.info("Aucun pointage enregistré pour l'instant.")
         else:
             dp = compute_presence_stats(agents, pv, get_justifications(), sessions)
-            nb_p = len(dp[dp["Présences"]>0])
-            taux_m = round(dp[dp["Présences"]>0]["Taux (%)"].mean(),1) if nb_p>0 else 0
+            nb_p = len(dp[(dp["Présent"]+dp["En retard"])>0])
+            taux_m = round(dp[(dp["Présent"]+dp["En retard"])>0]["Taux présence (%)"].mean(),1) if nb_p>0 else 0
             pa,pb,pc = st.columns(3)
             for col,(val,lbl,sub) in zip([pa,pb,pc],[
                 (f"{taux_m}%","Taux moyen","agents pointés"),

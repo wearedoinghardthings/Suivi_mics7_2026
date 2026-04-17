@@ -404,18 +404,28 @@ def mention_info(n, seuil=12):
     elif n>=seuil: return "Assez Bien", "badge-ab"
     else:          return "Insuffisant","badge-in"
 
-def get_note_cols(df):
-    """Retourne uniquement les colonnes numériques (notes), peu importe leur position."""
-    note_cols = []
+def get_name_col(df):
+    """
+    Retourne la colonne des noms.
+    C'est la colonne dont les valeurs NE sont PAS des nombres
+    (après remplacement virgule→point).
+    """
     for c in df.columns:
-        try:
-            converted = pd.to_numeric(df[c], errors="coerce")
-            # C'est une colonne de notes si au moins 50% des valeurs sont numériques
-            if converted.notna().sum() / max(len(df), 1) >= 0.5:
-                note_cols.append(c)
-        except:
-            pass
-    return note_cols
+        col_vals = df[c].astype(str).str.replace(",",".").str.strip()
+        numeric_count = pd.to_numeric(col_vals, errors="coerce").notna().sum()
+        ratio = numeric_count / max(len(df), 1)
+        # Si moins de 30% des valeurs sont numériques → c'est la colonne des noms
+        if ratio < 0.3:
+            return c
+    return df.columns[0]  # fallback
+
+def get_note_cols(df):
+    """
+    Retourne les colonnes de notes.
+    Ce sont toutes les colonnes SAUF la colonne des noms.
+    """
+    name = get_name_col(df)
+    return [c for c in df.columns if c != name]
 
 def get_name_col(df):
     """Retourne la colonne des noms (première colonne non numérique)."""

@@ -234,7 +234,7 @@ def db_save_calendrier(rows):
 def mem():
     return {"notes":None,"sessions":DEFAULT_SESSIONS,"presences":[],
             "justifications":[],"calendrier":[],"qr_codes":{},
-            "notes_visibles":False}
+            "notes_visibles":False,"notes_name_col":None}
 M = mem()
 
 def get_notes():
@@ -311,11 +311,15 @@ def get_heure_retard(session):
         return "14:45"
 
 def save_notes(df, label=""):
+    # Sauvegarder aussi le nom de la colonne des noms
+    name_c = get_name_col(df)
     if DB:
         db_set("notes", df.to_dict("records"))
         db_set("notes_label", label)
+        db_set("notes_name_col", name_c)
     else:
         M["notes"] = df.to_dict("records")
+        M["notes_name_col"] = name_c
 
 def save_sessions(lst):
     if DB: db_set("sessions", lst)
@@ -407,17 +411,24 @@ def mention_info(n, seuil=12):
 def get_name_col(df):
     """
     Retourne la colonne des noms.
-    C'est la colonne dont les valeurs NE sont PAS des nombres
-    (après remplacement virgule→point).
+    Utilise la valeur sauvegardée si disponible,
+    sinon détecte automatiquement la colonne non numérique.
     """
+    # 1. Essayer de récupérer la valeur sauvegardée
+    if DB:
+        saved = db_get("notes_name_col")
+        if saved and saved in df.columns:
+            return saved
+    elif M.get("notes_name_col") and M["notes_name_col"] in df.columns:
+        return M["notes_name_col"]
+    # 2. Détection automatique : première colonne avec moins de 30% de valeurs numériques
     for c in df.columns:
         col_vals = df[c].astype(str).str.replace(",",".").str.strip()
         numeric_count = pd.to_numeric(col_vals, errors="coerce").notna().sum()
         ratio = numeric_count / max(len(df), 1)
-        # Si moins de 30% des valeurs sont numériques → c'est la colonne des noms
         if ratio < 0.3:
             return c
-    return df.columns[0]  # fallback
+    return df.columns[0]
 
 def get_note_cols(df):
     """

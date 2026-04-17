@@ -240,8 +240,13 @@ M = mem()
 def get_notes():
     if DB:
         v = db_get("notes")
-        return pd.DataFrame(v) if v else pd.DataFrame(DEFAULT_NOTES)
-    return pd.DataFrame(M["notes"]) if M["notes"] else pd.DataFrame(DEFAULT_NOTES)
+        df_raw = pd.DataFrame(v) if v else pd.DataFrame(DEFAULT_NOTES)
+    else:
+        df_raw = pd.DataFrame(M["notes"]) if M["notes"] else pd.DataFrame(DEFAULT_NOTES)
+    note_c = [c for c in df_raw.columns if c != df_raw.columns[0]]
+    for c in note_c:
+        df_raw[c] = pd.to_numeric(df_raw[c], errors="coerce").fillna(0)
+    return df_raw
 
 def get_sessions():
     if DB:
@@ -400,7 +405,7 @@ def get_note_cols(df): return [c for c in df.columns if c!=df.columns[0]]
 def compute_stats(df, note_cols, name_col, seuil=12):
     rows=[]
     for _,row in df.iterrows():
-        vals=[float(row[c]) for c in note_cols]
+        vals=[float(v) if str(v).strip() not in ["","nan","None","NaN"] else 0.0 for v in [row[c] for c in note_cols]]
         moy=round(np.mean(vals),2); ml,_=mention_info(moy,seuil)
         rows.append({"Agent":row[name_col],"Moyenne":moy,"Max":max(vals),
                      "Min":min(vals),"Médiane":round(np.median(vals),2),

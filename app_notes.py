@@ -237,19 +237,46 @@ def mem():
             "notes_visibles":False,"notes_name_col":None}
 M = mem()
 
+def _detect_name_col(df_raw):
+    """
+    Détecte la colonne des noms = celle avec le PLUS de valeurs non numériques.
+    Fonctionne même si les colonnes sont dans le désordre.
+    """
+    best_col = df_raw.columns[0]
+    best_score = -1
+    for c in df_raw.columns:
+        vals = df_raw[c].astype(str).str.replace(",",".").str.strip()
+        non_num = vals.apply(lambda x: pd.to_numeric(x, errors='coerce')).isna().sum()
+        if non_num > best_score:
+            best_score = non_num
+            best_col = c
+    return best_col
+
 def get_notes():
     if DB:
         v = db_get("notes")
         df_raw = pd.DataFrame(v) if v else pd.DataFrame(DEFAULT_NOTES)
     else:
         df_raw = pd.DataFrame(M["notes"]) if M["notes"] else pd.DataFrame(DEFAULT_NOTES)
-    # Remplacer les virgules par des points (format français Google Sheets)
+
+    # Détecter la colonne des noms AVANT toute transformation
+    name_c = _detect_name_col(df_raw)
+
+    # Convertir chaque colonne correctement
     for c in df_raw.columns:
-        df_raw[c] = df_raw[c].astype(str).str.replace(",", ".").str.strip()
-    # Nettoyer toutes les colonnes de notes (convertir en numérique, vides → 0)
-    note_c = [c for c in df_raw.columns if c != df_raw.columns[0]]
-    for c in note_c:
-        df_raw[c] = pd.to_numeric(df_raw[c], errors="coerce").fillna(0)
+        if c == name_c:
+            # Colonne des noms → garder comme texte
+            df_raw[c] = df_raw[c].astype(str).str.strip()
+        else:
+            # Colonne de notes → remplacer virgules et convertir en nombre
+            df_raw[c] = pd.to_numeric(
+                df_raw[c].astype(str).str.replace(",",".").str.strip(),
+                errors="coerce"
+            ).fillna(0)
+
+    # Remettre la colonne des noms EN PREMIER
+    cols = [name_c] + [c for c in df_raw.columns if c != name_c]
+    df_raw = df_raw[cols]
     return df_raw
 
 def get_sessions():
@@ -409,43 +436,12 @@ def mention_info(n, seuil=12):
     else:          return "Insuffisant","badge-in"
 
 def get_name_col(df):
-    """
-    Retourne la colonne des noms.
-    Utilise la valeur sauvegardée si disponible,
-    sinon détecte automatiquement la colonne non numérique.
-    """
-    # 1. Essayer de récupérer la valeur sauvegardée
-    if DB:
-        saved = db_get("notes_name_col")
-        if saved and saved in df.columns:
-            return saved
-    elif M.get("notes_name_col") and M["notes_name_col"] in df.columns:
-        return M["notes_name_col"]
-    # 2. Détection automatique : première colonne avec moins de 30% de valeurs numériques
-    for c in df.columns:
-        col_vals = df[c].astype(str).str.replace(",",".").str.strip()
-        numeric_count = pd.to_numeric(col_vals, errors="coerce").notna().sum()
-        ratio = numeric_count / max(len(df), 1)
-        if ratio < 0.3:
-            return c
+    """La colonne des noms est toujours la première (get_notes() la met en premier)."""
     return df.columns[0]
 
 def get_note_cols(df):
-    """
-    Retourne les colonnes de notes.
-    Ce sont toutes les colonnes SAUF la colonne des noms.
-    """
-    name = get_name_col(df)
-    return [c for c in df.columns if c != name]
-
-def get_name_col(df):
-    """Retourne la colonne des noms (première colonne non numérique)."""
-    for c in df.columns:
-        converted = pd.to_numeric(df[c], errors="coerce")
-        # C'est la colonne des noms si moins de 50% sont numériques
-        if converted.notna().sum() / max(len(df), 1) < 0.5:
-            return c
-    return df.columns[0]  # fallback
+    """Toutes les colonnes sauf la première (qui est la colonne des noms)."""
+    return list(df.columns[1:])
 
 def compute_stats(df, note_cols, name_col, seuil=12):
     rows=[]

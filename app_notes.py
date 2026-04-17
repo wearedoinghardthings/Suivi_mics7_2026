@@ -243,6 +243,10 @@ def get_notes():
         df_raw = pd.DataFrame(v) if v else pd.DataFrame(DEFAULT_NOTES)
     else:
         df_raw = pd.DataFrame(M["notes"]) if M["notes"] else pd.DataFrame(DEFAULT_NOTES)
+    # Remplacer les virgules par des points (format français Google Sheets)
+    for c in df_raw.columns:
+        df_raw[c] = df_raw[c].astype(str).str.replace(",", ".").str.strip()
+    # Nettoyer toutes les colonnes de notes (convertir en numérique, vides → 0)
     note_c = [c for c in df_raw.columns if c != df_raw.columns[0]]
     for c in note_c:
         df_raw[c] = pd.to_numeric(df_raw[c], errors="coerce").fillna(0)
@@ -400,7 +404,27 @@ def mention_info(n, seuil=12):
     elif n>=seuil: return "Assez Bien", "badge-ab"
     else:          return "Insuffisant","badge-in"
 
-def get_note_cols(df): return [c for c in df.columns if c!=df.columns[0]]
+def get_note_cols(df):
+    """Retourne uniquement les colonnes numériques (notes), peu importe leur position."""
+    note_cols = []
+    for c in df.columns:
+        try:
+            converted = pd.to_numeric(df[c], errors="coerce")
+            # C'est une colonne de notes si au moins 50% des valeurs sont numériques
+            if converted.notna().sum() / max(len(df), 1) >= 0.5:
+                note_cols.append(c)
+        except:
+            pass
+    return note_cols
+
+def get_name_col(df):
+    """Retourne la colonne des noms (première colonne non numérique)."""
+    for c in df.columns:
+        converted = pd.to_numeric(df[c], errors="coerce")
+        # C'est la colonne des noms si moins de 50% sont numériques
+        if converted.notna().sum() / max(len(df), 1) < 0.5:
+            return c
+    return df.columns[0]  # fallback
 
 def compute_stats(df, note_cols, name_col, seuil=12):
     rows=[]
@@ -699,8 +723,8 @@ if st.session_state.session_active not in sessions:
 # CHARGEMENT
 # ════════════════════════════════════════════════════════════
 df         = get_notes()
-name_col   = df.columns[0]
-note_cols  = get_note_cols(df)
+name_col   = get_name_col(df)          # détecte automatiquement la colonne des noms
+note_cols  = get_note_cols(df)         # détecte automatiquement les colonnes numériques
 agents     = df[name_col].tolist()
 seuil_note = get_seuil_note()
 df_stats   = compute_stats(df, note_cols, name_col, seuil_note)

@@ -670,8 +670,13 @@ def export_pdf_direction(df_stats, df_pres_stats, note_cols, agents, seuil_note=
 # ════════════════════════════════════════════════════════════
 # DÉTECTION VUE
 # ════════════════════════════════════════════════════════════
-VUE_PUBLIC = st.query_params.get("vue","") == "public"
-
+try:
+    _vue_param = st.query_params.get("vue", "")
+    if isinstance(_vue_param, list):
+        _vue_param = _vue_param[0] if _vue_param else ""
+    VUE_PUBLIC = str(_vue_param).strip() == "public"
+except Exception:
+    VUE_PUBLIC = False
 # ════════════════════════════════════════════════════════════
 # SESSION STATE
 # ════════════════════════════════════════════════════════════

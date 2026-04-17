@@ -925,6 +925,7 @@ if VUE_PUBLIC:
             st.info("Aucun pointage enregistré pour l'instant.")
         else:
             dp = compute_presence_stats(agents, pv, get_justifications(), sessions)
+            
             nb_p = len(dp[(dp["Présent"]+dp["En retard"])>0])
             taux_m = round(dp[(dp["Présent"]+dp["En retard"])>0]["Taux présence (%)"].mean(),1) if nb_p>0 else 0
             pa,pb,pc = st.columns(3)
@@ -937,12 +938,13 @@ if VUE_PUBLIC:
                              f'<div class="kpi-label">{lbl}</div><div class="kpi-sub">{sub}</div></div>',
                              unsafe_allow_html=True)
             st.markdown("<br>",unsafe_allow_html=True)
-            ds = dp[dp["Présences"]>0].sort_values("Taux (%)",ascending=True)
+            ds = dp[(dp["Présent"]+dp["En retard"])>0].sort_values("Taux présence (%)",ascending=True)
+            
             if len(ds)>0:
-                cp = ["#27ae60" if t>=75 else "#f39c12" if t>=50 else "#e74c3c" for t in ds["Taux (%)"]]
-                fp = go.Figure(go.Bar(x=ds["Taux (%)"],y=ds["Agent"],orientation="h",
+                cp = ["#27ae60" if t>=75 else "#f39c12" if t>=50 else "#e74c3c" for t in ds["Taux présence (%)"]]
+                fp = go.Figure(go.Bar(x=ds["Taux présence (%)"],y=ds["Agent"],orientation="h",
                     marker=dict(color=cp,line=dict(color="white",width=0.5)),
-                    text=[f"{v}%" for v in ds["Taux (%)"]],textposition="outside"))
+                    text=[f"{v}%" for v in ds["Taux présence (%)"]],textposition="outside"))
                 fp.update_layout(paper_bgcolor="white",plot_bgcolor="white",
                     font=dict(family="DM Sans",color="#2c3e7a"),
                     xaxis=dict(range=[0,118],gridcolor="#f0f4ff"),

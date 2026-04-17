@@ -1121,8 +1121,9 @@ else:
             for profil,group in df_profils.groupby("Profil"):
                 emoji = str(profil)[:2]
                 css = {"🟢":"profil-vert","🟡":"profil-bleu","🟠":"profil-orange","🔴":"profil-rouge"}.get(emoji,"profil-vert")
+                agents_str = " · ".join([str(a) for a in group["Agent"].tolist()])
                 st.markdown(f'<div class="{css}"><b>{profil}</b> ({len(group)} agents)<br>'
-                            f'<small>{" · ".join(group["Agent"].tolist())}</small></div>',unsafe_allow_html=True)
+                            f'<small>{agents_str}</small></div>',unsafe_allow_html=True)
 
     # ── ANALYSE CUMULATIVE ────────────────────────────────────
     with tab_analyse:

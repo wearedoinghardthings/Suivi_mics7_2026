@@ -1125,11 +1125,41 @@ if VUE_PUBLIC:
                                 f'<small>{st.session_state.last_time} · Prêt pour le suivant…</small></div>',
                                 unsafe_allow_html=True)
                 if QR_OK:
-                    st.caption(f"📸 Caméra {'arrière' if st.session_state.camera_facing=='environment' else 'avant'} — Présentez le badge QR")
+                    facing = st.session_state.camera_facing  # "environment" ou "user"
+                    st.caption(f"📸 Caméra {'arrière' if facing=='environment' else 'avant'} — Présentez le badge QR")
+                    # Essai avec camera_facing_mode, puis facing_mode, puis sans argument
+                    # On change la key selon la caméra pour forcer la réinitialisation du composant
+                    scanner_key = f"pub_scanner_{facing}"
+                    qr_val = None
                     try:
-                        qr_val = qrcode_scanner(key="pub_scanner", camera_facing_mode=st.session_state.camera_facing)
+                        qr_val = qrcode_scanner(key=scanner_key, camera_facing_mode=facing)
                     except TypeError:
-                        qr_val = qrcode_scanner(key="pub_scanner")
+                        try:
+                            qr_val = qrcode_scanner(key=scanner_key, facing_mode=facing)
+                        except TypeError:
+                            # Le module ne supporte aucun paramètre de caméra :
+                            # on injecte un script JS pour forcer le facingMode côté navigateur
+                            force_js = f"""
+<script>
+(function waitForVideo(){{
+  var v = document.querySelector('video');
+  if(!v){{ setTimeout(waitForVideo, 300); return; }}
+  if(v._facingPatched) return;
+  v._facingPatched = true;
+  var origGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+  navigator.mediaDevices.getUserMedia = function(c){{
+    if(c && c.video && typeof c.video === 'object'){{
+      c.video.facingMode = {{ ideal: '{facing}' }};
+    }} else if(c && c.video === true){{
+      c.video = {{ facingMode: {{ ideal: '{facing}' }} }};
+    }}
+    return origGetUserMedia(c);
+  }};
+  v.srcObject && v.srcObject.getTracks().forEach(t=>t.stop());
+}})();
+</script>"""
+                            st.components.v1.html(force_js, height=0)
+                            qr_val = qrcode_scanner(key=scanner_key)
                     if qr_val:
                         af = key_to_agent(str(qr_val).strip())
                         if af in agents:

@@ -1126,7 +1126,10 @@ if VUE_PUBLIC:
                                 unsafe_allow_html=True)
                 if QR_OK:
                     st.caption(f"📸 Caméra {'arrière' if st.session_state.camera_facing=='environment' else 'avant'} — Présentez le badge QR")
-                    qr_val = qrcode_scanner(key="pub_scanner", camera_facing_mode=st.session_state.camera_facing)
+                    try:
+                        qr_val = qrcode_scanner(key="pub_scanner", camera_facing_mode=st.session_state.camera_facing)
+                    except TypeError:
+                        qr_val = qrcode_scanner(key="pub_scanner")
                     if qr_val:
                         af = key_to_agent(str(qr_val).strip())
                         if af in agents:

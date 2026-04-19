@@ -728,7 +728,7 @@ except Exception:
 # ════════════════════════════════════════════════════════════
 sessions = get_sessions()
 for k,v in {
-    "admin_ok":False,"camera_on":False,
+    "admin_ok":False,"camera_on":False,"camera_facing":"environment",
     "last_agent":None,"last_time":None,
     "session_active": sessions[0] if sessions else "Session 1",
 }.items():
@@ -1097,6 +1097,15 @@ if VUE_PUBLIC:
         </div>""", height=50)
         ck1,ck2 = st.columns([1.3,1])
         with ck1:
+            # Sélecteur de caméra (toujours visible)
+            cam_choice = st.radio(
+                "📷 Caméra",
+                options=["Arrière (recommandé)", "Avant"],
+                index=0 if st.session_state.camera_facing=="environment" else 1,
+                horizontal=True, key="cam_pub"
+            )
+            st.session_state.camera_facing = "environment" if "Arrière" in cam_choice else "user"
+
             if not st.session_state.camera_on:
                 if st.button("📷 Ouvrir la caméra",type="primary",use_container_width=True):
                     st.session_state.camera_on=True; st.session_state.last_agent=None; st.rerun()
@@ -1116,8 +1125,8 @@ if VUE_PUBLIC:
                                 f'<small>{st.session_state.last_time} · Prêt pour le suivant…</small></div>',
                                 unsafe_allow_html=True)
                 if QR_OK:
-                    st.caption("📸 Présentez le badge QR")
-                    qr_val = qrcode_scanner(key="pub_scanner")
+                    st.caption(f"📸 Caméra {'arrière' if st.session_state.camera_facing=='environment' else 'avant'} — Présentez le badge QR")
+                    qr_val = qrcode_scanner(key="pub_scanner", camera_facing_mode=st.session_state.camera_facing)
                     if qr_val:
                         af = key_to_agent(str(qr_val).strip())
                         if af in agents:
@@ -1448,6 +1457,15 @@ else:
         </div>""", height=50)
         ck1,ck2 = st.columns([1.3,1])
         with ck1:
+            # Sélecteur de caméra
+            cam_choice_dir = st.radio(
+                "📷 Caméra",
+                options=["Arrière (recommandé)", "Avant"],
+                index=0 if st.session_state.camera_facing=="environment" else 1,
+                horizontal=True, key="cam_dir"
+            )
+            st.session_state.camera_facing = "environment" if "Arrière" in cam_choice_dir else "user"
+
             if not st.session_state.camera_on:
                 if st.button("📷 Ouvrir la caméra",type="primary",use_container_width=True):
                     st.session_state.camera_on=True; st.session_state.last_agent=None; st.rerun()
@@ -1468,8 +1486,8 @@ else:
                                 f'<small>Pointé à {st.session_state.last_time} · '
                                 f'Prêt pour le prochain…</small></div>',unsafe_allow_html=True)
                 if QR_OK:
-                    st.caption("📸 Présentez le badge QR — détection automatique")
-                    qr_val = qrcode_scanner(key="kiosque_dir")
+                    st.caption(f"📸 Caméra {'arrière' if st.session_state.camera_facing=='environment' else 'avant'} — Présentez le badge QR")
+                    qr_val = qrcode_scanner(key="kiosque_dir", camera_facing_mode=st.session_state.camera_facing)
                     if qr_val:
                         af = key_to_agent(str(qr_val).strip())
                         if af in agents:

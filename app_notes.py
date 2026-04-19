@@ -849,13 +849,21 @@ if VUE_PUBLIC:
     tab_lbl_chiffres = "📊 Notes" if notes_visibles else "🔒 Notes (masquées)"
     tab_lbl_podium   = "🏆 Classement" if notes_visibles else "🔒 Classement (masqué)"
 
-    tab_couleur, tab_chiffres, tab_podium_p, tab_pres_p, tab_kiosque_p = st.tabs([
+    tab_couleur, tab_fleches, tab_chiffres, tab_podium_p, tab_pres_p, tab_kiosque_p = st.tabs([
         "🎨 Notes couleur",
+        "🏹 Notes flèches",
         tab_lbl_chiffres,
         tab_lbl_podium,
         "👥 Présences",
         "📷 Scanner",
     ])
+
+    # ── Helper flèche + couleur ────────────────────────────────
+    def get_arrow_info(n, seuil=12):
+        if n >= 16:   return "↑", "#e6f4ea", "#1e7e34"
+        elif n >= 14: return "↗", "#dbeafe", "#1a56db"
+        elif n >= seuil: return "→", "#fef3c7", "#92400e"
+        else:         return "↓", "#fee2e2", "#b91c1c"
 
     # ── Notes couleur (toujours visible) ──────────────────────
     with tab_couleur:
@@ -899,6 +907,82 @@ if VUE_PUBLIC:
             col.markdown(f'<div style="background:{bg};border-radius:8px;padding:10px;'
                          f'text-align:center;font-size:.85rem;font-weight:500;">{emoji} {lbl}</div>',
                          unsafe_allow_html=True)
+
+    # ── Notes flèches ──────────────────────────────────────────
+    with tab_fleches:
+        st.markdown('<div class="section-title">🏹 Notes par flèches</div>',unsafe_allow_html=True)
+
+        # Barre de recherche
+        search_query = st.text_input(
+            "🔍 Rechercher un agent",
+            placeholder="Tapez un nom...",
+            key="search_fleches"
+        )
+
+        # Filtrer les agents selon la recherche
+        df_filtered = df.copy()
+        if search_query.strip():
+            mask = df[name_col].astype(str).str.lower().str.contains(
+                search_query.strip().lower(), na=False)
+            df_filtered = df[mask].reset_index(drop=True)
+
+        if len(df_filtered) == 0:
+            st.warning(f"Aucun agent trouvé pour **{search_query}**")
+        else:
+            # Tableau flèches
+            html_f = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:.82rem;">'
+            html_f += '<tr style="background:#2c3e7a;color:white;">'
+            html_f += f'<th style="padding:8px;text-align:left;border:1px solid #dce4f5;min-width:160px;">{name_col}</th>'
+            for col in note_cols:
+                html_f += f'<th style="padding:8px;text-align:center;border:1px solid #dce4f5;">{col}</th>'
+            html_f += '<th style="padding:8px;text-align:center;border:1px solid #dce4f5;">Bilan</th>'
+            html_f += '</tr>'
+
+            for _, row in df_filtered.iterrows():
+                html_f += '<tr>'
+                html_f += (f'<td style="padding:7px 10px;border:1px solid #f0f4ff;'
+                           f'font-weight:500;white-space:nowrap;">{row[name_col]}</td>')
+                for col in note_cols:
+                    v = float(row[col])
+                    arrow, bg, fc = get_arrow_info(v, seuil_note)
+                    if notes_visibles:
+                        content = (f'<span style="font-size:1.1rem;">{arrow}</span>'
+                                   f'<span style="font-size:.85rem;margin-left:4px;">{int(v)}</span>')
+                    else:
+                        content = f'<span style="font-size:1.3rem;">{arrow}</span>'
+                    html_f += (f'<td style="padding:7px;text-align:center;background:{bg};'
+                               f'color:{fc};border:1px solid #f0f4ff;font-weight:600;">{content}</td>')
+                # Bilan
+                moy_v = df_stats[df_stats["Agent"]==row[name_col]]["Moyenne"].values
+                if len(moy_v)>0:
+                    arrow, bg, fc = get_arrow_info(moy_v[0], seuil_note)
+                    if notes_visibles:
+                        content_b = (f'<span style="font-size:1.1rem;">{arrow}</span>'
+                                     f'<span style="font-size:.85rem;margin-left:4px;">{moy_v[0]:.1f}</span>')
+                    else:
+                        content_b = f'<span style="font-size:1.3rem;">{arrow}</span>'
+                    html_f += (f'<td style="padding:7px;text-align:center;background:{bg};'
+                               f'color:{fc};border:1px solid #f0f4ff;font-weight:700;">{content_b}</td>')
+                html_f += '</tr>'
+            html_f += '</table></div>'
+            st.markdown(html_f, unsafe_allow_html=True)
+
+        st.markdown("<br>",unsafe_allow_html=True)
+        # Légende flèches
+        l1,l2,l3,l4 = st.columns(4)
+        for col,arrow,lbl,bg,fc in [
+            (l1,"↑",f"Très Bien (≥16)","#e6f4ea","#1e7e34"),
+            (l2,"↗","Bien (14-15)","#dbeafe","#1a56db"),
+            (l3,"→",f"Assez Bien ({int(seuil_note)}-13)","#fef3c7","#92400e"),
+            (l4,"↓",f"Insuffisant (<{int(seuil_note)})","#fee2e2","#b91c1c"),
+        ]:
+            col.markdown(
+                f'<div style="background:{bg};border-radius:8px;padding:10px;text-align:center;'
+                f'font-size:.85rem;font-weight:600;color:{fc};">'
+                f'<span style="font-size:1.2rem;">{arrow}</span> {lbl}</div>',
+                unsafe_allow_html=True)
+        if not notes_visibles:
+            st.caption("🔒 Les chiffres sont masqués — activables par l'administrateur.")
 
     # ── Notes chiffres ─────────────────────────────────────────
     with tab_chiffres:

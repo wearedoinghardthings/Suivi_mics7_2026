@@ -1596,11 +1596,23 @@ else:
                 st.markdown('<div class="section-title">Calendrier — Dates et notes</div>',unsafe_allow_html=True)
                 date_debut = st.date_input("Date de début",value=datetime.date.today())
                 nb_jours   = st.number_input("Nombre de jours",min_value=1,max_value=90,value=21)
+
+                # Choix des jours inclus
+                jours_options = ["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"]
+                jours_selec = st.multiselect(
+                    "Jours de formation",
+                    options=jours_options,
+                    default=["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi"],
+                    help="Cochez les jours où la formation a lieu"
+                )
+                # Mapping jour → numéro weekday Python
+                jour_map = {"Lundi":0,"Mardi":1,"Mercredi":2,"Jeudi":3,"Vendredi":4,"Samedi":5,"Dimanche":6}
+                jours_num = [jour_map[j] for j in jours_selec]
                 if st.button("🗓️ Générer le calendrier",type="primary",use_container_width=True):
                     rows = []
                     for j in range(nb_jours):
                         d = date_debut+datetime.timedelta(days=j)
-                        if d.weekday()<5:
+                        if d.weekday() in jours_num:
                             rows.append({"date_jour":str(d),"a_une_note":False,"nom_note":None,"ordre_note":None})
                     if DB: db_save_calendrier(rows)
                     else: M["calendrier"]=[{**r,"date_jour":datetime.date.fromisoformat(r["date_jour"])} for r in rows]
